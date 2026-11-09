@@ -693,7 +693,7 @@ test("baselines of closed terminals and removed worktrees are pruned; live ones 
 end)
 
 -- cmd+r, driven through a stand-in for Rex's Lua API.
-local function rex_toggle(blocks, foregrounds, focused)
+local function rex_toggle(blocks, foregrounds, focused, entry)
   local calls = {}
   _G.rex = {
     session_id = "session:s",
@@ -707,7 +707,7 @@ local function rex_toggle(blocks, foregrounds, focused)
     exec = function(cmd) return cmd[3] .. "\n", "", 0 end,
   }
   local mod = dofile(plugin .. "/rex/reviewr/init.lua")
-  mod.toggle({})
+  mod[entry or "toggle"]({})
   _G.rex = nil
   return vim.tbl_filter(function(c) return c.method ~= "session.list_blocks" and c.method ~= "block.method" end, calls)
 end
@@ -751,6 +751,26 @@ test("cmd+r elsewhere keeps one unpaired review per repository per window", func
     { block_id = "block:V", label = "review", placement = "detached" } }, fg, "block:T")
   eq(calls[1].method, "session.new_split")
   eq(calls[1].params.layout.block.label, "review")
+end)
+
+test("cmd+shift+r toggles a PR review kept apart from cmd+r's, paired in an agent's terminal", function()
+  local fg = { ["block:A"] = { argv0 = "claude", cwd = "/repo" }, ["block:T"] = { argv0 = "zsh", cwd = "" } }
+  local calls = rex_toggle({ { block_id = "block:A" }, { block_id = "block:R", label = "review:block:A", placement = "placed" } },
+    fg, "block:A", "open_pr")
+  eq(calls[1].method, "session.new_split")
+  local block = calls[1].params.layout.block
+  eq(block.label, "review:pr:block:A")
+  local command = table.concat(block.options.command, " ")
+  assert(command:find("ReviewrPR", 1, true), command)
+  assert(command:find('block = "block:A", name = "claude"', 1, true), command)
+  calls = rex_toggle({ { block_id = "block:A" }, { block_id = "block:P", label = "review:pr:block:A", placement = "placed" } },
+    fg, "block:A", "open_pr")
+  eq({ calls[1].method, calls[1].params.block_id }, { "session.detach_block", "block:P" })
+  calls = rex_toggle({ { block_id = "block:P", label = "review:pr", placement = "placed" } }, fg, "block:P", "open_pr")
+  eq({ calls[1].method, calls[1].params.block_id }, { "session.detach_block", "block:P" })
+  calls = rex_toggle({ { block_id = "block:T" } }, fg, "block:T", "open_pr")
+  eq(calls[1].params.layout.block.label, "review:pr")
+  eq(calls[1].params.layout.block.options.cwd, os.getenv("HOME"))
 end)
 
 test("the changed-files panel keeps the configured height, however few files there are", function()
@@ -855,6 +875,188 @@ test("an edit in the same second as the commit, at the same size, still shows", 
   vim.fn.delete(other, "rf")
 end)
 
+-- origin: refs/pull/7/head adds b.txt on a.txt's edit; main moved on after. A
+-- clone sits under roots/, its origin URL a github.com one that git rewrites
+-- to the local origin, as the plugin finds clones by URL.
+local pr = {}
+do
+  pr.base = vim.fn.resolve(vim.fn.tempname())
+  vim.fn.mkdir(pr.base .. "/roots", "p")
+  vim.fn.mkdir(pr.base .. "/elsewhere", "p")
+  pr.seed, pr.origin, pr.clone = pr.base .. "/seed", pr.base .. "/origin.git", pr.base .. "/roots/widgets"
+  local function in_(dir, args) return sh("git -C " .. vim.fn.shellescape(dir) .. " " .. args) end
+  sh("git init -q -b main " .. pr.seed)
+  in_(pr.seed, "config user.email t@t && git -C " .. pr.seed .. " config user.name t")
+  write(pr.seed .. "/a.txt", { "one", "two" })
+  in_(pr.seed, "add . && git -C " .. pr.seed .. " commit -qm init")
+  sh("git clone -q --bare " .. pr.seed .. " " .. pr.origin)
+  in_(pr.seed, "remote add origin " .. pr.origin)
+  in_(pr.seed, "checkout -qb feat")
+  write(pr.seed .. "/a.txt", { "one", "TWO" })
+  write(pr.seed .. "/b.txt", { "hello", "world" })
+  in_(pr.seed, "add . && git -C " .. pr.seed .. " commit -qm 'Add b'")
+  in_(pr.seed, "push -q origin HEAD:refs/pull/7/head")
+  in_(pr.seed, "checkout -q main")
+  write(pr.seed .. "/c.txt", { "main only" })
+  in_(pr.seed, "add . && git -C " .. pr.seed .. " commit -qm 'main moves on' && git -C " .. pr.seed .. " push -q origin main")
+  sh("git clone -q " .. pr.origin .. " " .. pr.clone)
+  in_(pr.clone, "config user.email t@t && git -C " .. pr.clone .. " config user.name t")
+  in_(pr.clone, "config url." .. pr.origin .. ".insteadOf https://github.com/acme/widgets.git")
+  in_(pr.clone, "remote set-url origin https://github.com/acme/widgets.git")
+  pr.git = function(args) return in_(pr.clone, args) end
+  pr.push = function(args) return in_(pr.seed, args) end
+end
+
+local github = require("reviewr.github")
+local gh_run = github.run
+local function view(n, extra)
+  return vim.tbl_extend("force", { number = n, title = "Add b", baseRefName = "main", headRefName = "feat",
+    headRepository = { name = "widgets" }, headRepositoryOwner = { login = "acme" },
+    url = "https://github.com/acme/widgets/pull/" .. n }, extra or {})
+end
+local function gh_stub(handler) github.run = function(args) return handler(args) end end
+local function files_shown()
+  return vim.tbl_map(function(f) return f.path end, ui.files_panel().files)
+end
+local function user_refs()
+  return pr.git("for-each-ref --format='%(refname) %(objectname)' | grep -v refs/reviewr; git -C " .. pr.clone
+    .. " rev-parse HEAD; git -C " .. pr.clone .. " status --porcelain")
+end
+local function leave_pr_review()
+  reviewr.close()
+  vim.cmd("cd " .. repo)
+end
+
+test("pr scope shows the PR's files against its merge base and leaves the user's refs, index and HEAD alone", function()
+  gh_stub(function() return view(7) end)
+  local before = user_refs()
+  reviewr.close()
+  vim.cmd("cd " .. pr.clone)
+  assert(reviewr.set_scope("pr", { pr = 7 }))
+  eq(files_shown(), { "a.txt", "b.txt" }, "main's own commit is not part of the PR")
+  eq(require("reviewr.scope").get().label, "PR #7: Add b")
+  reviewr.open_file("a.txt")
+  eq(lines(ui.panes().left_buf), { "one", "two" }, "left is the merge base")
+  eq(lines(ui.panes().right_buf), { "one", "TWO" })
+  eq(user_refs(), before)
+  assert(vim.trim(pr.git("rev-parse refs/reviewr/pr/7")) ~= "", "head kept in a private ref")
+end)
+
+test("refresh in a PR view fetches again, so a new push shows", function()
+  pr.push("checkout -q feat")
+  write(pr.seed .. "/d.txt", { "later" })
+  pr.push("add . && git -C " .. pr.seed .. " commit -qm later && git -C " .. pr.seed .. " push -q -f origin HEAD:refs/pull/7/head")
+  pr.push("checkout -q main")
+  assert(reviewr.refresh())
+  eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
+end)
+
+test("comments on a PR view export in the usual message", function()
+  store.clear()
+  reviewr.open_file("b.txt")
+  vim.api.nvim_set_current_win(ui.panes().right_win)
+  reviewr.add_comment({ start = 2, body = "why world" })
+  local ok, n = reviewr.export("clipboard")
+  eq({ ok, n }, { true, 1 })
+  eq(vim.fn.getreg('"'), table.concat({
+    "Code review comments from my editor:",
+    "",
+    "1. b.txt:2",
+    "   > world",
+    "   Comment: why world",
+    "",
+    "Make the requested changes and answer any questions. Reply per item.",
+  }, "\n"))
+  store.clear()
+end)
+
+test("a fetch failure keeps the current view and reports git's error", function()
+  gh_stub(function() return view(8) end)
+  local notes, notify = {}, vim.notify
+  vim.notify = function(msg) table.insert(notes, msg) end
+  local res = reviewr.set_scope("pr", { pr = 8 })
+  vim.notify = notify
+  eq(res, nil)
+  eq(require("reviewr.scope").get().label, "PR #7: Add b")
+  eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
+  assert(notes[1] and notes[1]:find("could not fetch PR #8", 1, true) and notes[1]:find("refs/pull/8/head", 1, true),
+    vim.inspect(notes))
+end)
+
+test("gp lists the open PRs of the repository and opens the one picked", function()
+  assert(vim.fn.maparg("gp", "n", false, true).buffer == 1, "gp not bound in the diff")
+  local select, shown = ui.pick, nil
+  ui.pick = function(items, opts, cb)
+    shown = vim.tbl_map(opts.format_item, items)
+    cb(items[2])
+  end
+  local list = { { number = 3, title = "Other", author = { login = "ann" }, isDraft = false },
+    { number = 7, title = "Add b", author = { login = "mrk" }, isDraft = true } }
+  gh_stub(function(args) if args[2] == "list" then return list end return view(7) end)
+  reviewr.pick_pr()
+  ui.pick = select
+  eq(shown, { "#3  Other  (ann)", "#7  Add b  (mrk, draft)" })
+  eq(require("reviewr.scope").get().label, "PR #7: Add b")
+  leave_pr_review()
+end)
+
+test("a PR whose head branch is checked out in a worktree opens that worktree's branch view", function()
+  local wt = vim.fn.resolve(pr.base .. "/wt")
+  pr.git("worktree add -q -b feat " .. wt .. " refs/reviewr/pr/7")
+  gh_stub(function() return view(7) end)
+  vim.cmd("cd " .. pr.clone)
+  local notes, notify = {}, vim.notify
+  vim.notify = function(msg) table.insert(notes, msg) end
+  assert(reviewr.set_scope("pr", { pr = 7 }))
+  vim.notify = notify
+  write(wt .. "/a.txt", { "one", "TWO", "uncommitted" })
+  assert(reviewr.refresh())
+  eq(require("reviewr.scope").get().repo, wt)
+  eq(require("reviewr.scope").get().name, "branch")
+  eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
+  reviewr.open_file("a.txt")
+  eq(lines(ui.panes().right_buf), { "one", "TWO", "uncommitted" }, "the worktree's edits show")
+  assert(vim.tbl_contains(vim.tbl_map(function(m) return m:find("checked out", 1, true) ~= nil end, notes), true),
+    "tells the user it switched")
+  leave_pr_review()
+  pr.git("worktree remove --force " .. wt)
+  pr.git("branch -D feat")
+end)
+
+test(":ReviewrPR owner/repo#n from outside finds the clone under pr.roots", function()
+  gh_stub(function(args)
+    assert(vim.tbl_contains(args, "acme/widgets"), "views the PR in its own repository")
+    return view(7)
+  end)
+  local roots = require("reviewr.config").get().pr.roots
+  require("reviewr.config").get().pr.roots = { pr.base .. "/roots" }
+  vim.cmd("cd " .. pr.base .. "/elsewhere")
+  vim.cmd("ReviewrPR acme/widgets#7")
+  require("reviewr.config").get().pr.roots = roots
+  eq(require("reviewr.scope").get().repo, pr.clone)
+  eq(vim.fn.resolve(vim.fn.getcwd()), pr.clone)
+  eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
+  leave_pr_review()
+end)
+
+test("in a bare clone, working-tree views say so and PR and commit views work", function()
+  local bare = pr.base .. "/bare.git"
+  sh("git clone -q --bare " .. pr.origin .. " " .. bare)
+  sh("git -C " .. bare .. " remote set-url origin https://github.com/acme/widgets.git")
+  sh("git -C " .. bare .. " config url." .. pr.origin .. ".insteadOf https://github.com/acme/widgets.git")
+  gh_stub(function() return view(7) end)
+  assert(reviewr.set_scope("pr", { pr = 7, dir = bare }))
+  eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
+  local notes, notify = {}, vim.notify
+  vim.notify = function(msg) table.insert(notes, msg) end
+  local res = reviewr.set_scope("branch")
+  vim.notify = notify
+  eq(res, nil)
+  eq(notes, { "reviewr: no working tree in this clone; only PR and commit views work" })
+  leave_pr_review()
+  github.run = gh_run
+end)
+
 test("close drops comments and the review tab, even as the only tab", function()
   vim.cmd("tabonly")
   reviewr.add_comment({ file = "g.lua", start = 1, body = "x" })
@@ -866,4 +1068,5 @@ end)
 
 io.stdout:write(string.format("\n%d passed, %d failed\n", passed, failures))
 vim.fn.delete(repo, "rf")
+vim.fn.delete(pr.base, "rf")
 os.exit(failures == 0 and 0 or 1)

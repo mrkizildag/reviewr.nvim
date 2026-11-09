@@ -127,7 +127,8 @@ nvim -c 'cd /path/repo' -c 'ReviewrOpen HEAD feature'
 | Command | Description |
 |---|---|
 | `:ReviewrOpen [base] [head] [label]` | open a review; no args reviews uncommitted changes, `{base}` alone reviews the working tree against its merge base with base, `{base} {head}` diffs the commits of head against its merge base with base |
-| `:ReviewrScope {scope}` | switch scope: `uncommitted`, `staged`, `branch` (the working tree against its merge base with the default branch, or the base picked with `gb`), `turn`, `commit {sha}` |
+| `:ReviewrScope {scope}` | switch scope: `uncommitted`, `staged`, `branch` (the working tree against its merge base with the default branch, or the base picked with `gb`), `turn`, `commit {sha}`, `pr {number}` (a pull request of this repository against its merge base, fetched without checking it out; a PR whose branch is checked out in a worktree opens that worktree's branch view instead) |
+| `:ReviewrPR [arg]` | review a pull request: `{number}`, `owner/repo#{number}` or a PR URL. Without an argument, pick among the open PRs you authored or were asked to review, from any directory. Needs the `gh` CLI |
 | `:[range]ReviewrComment {text}` | comment on the current line or range |
 | `:ReviewrTurn` | snapshot the working tree as the turn baseline |
 | `:ReviewrExport {clipboard\|send\|inbox}` | export all comments (all-or-none) |
@@ -149,18 +150,31 @@ The bar above the change pane always shows the next step. `?` lists every key.
 | `l` | list comments |
 | `]c` / `[c` | next / previous change |
 | `f` / `F` | next / previous changed file |
-| `r` | reread the changes from git and the working tree |
+| `r` | reread the changes from git and the working tree (a pull request is fetched again first) |
 | `u` `b` `t` | view: uncommitted / branch / last turn |
 | `gc` | pick a commit and review just that commit |
 | `gb` | pick the base branch for the branch view |
+| `gp` | pick an open pull request of this repository and review it |
 | `?` | all keys |
 | `q` | close. With unsent comments (new, or edited since the last send or copy) it asks once: Enter closes, Right then Enter or Esc keeps reviewing. A review cmd+r opened closes its pane too |
 
 The changed-files panel has the same keys, except those that act on a line of the diff (`c`, `e`, `d`, `n`, `N`, `]c`, `[c`); there `<CR>` opens the file under the cursor.
 
-The pickers (`gc`, `gb`, `S`) open a small list: `j`/`k` or the arrows move, Enter picks, Esc cancels.
+The pickers (`gc`, `gb`, `gp`, `S`) open a small list: `j`/`k` or the arrows move, Enter picks, Esc cancels.
 
 All buffer-local and remappable through the `keymaps` option or `require("reviewr.keymaps").set_defaults()`.
+
+## Pull requests
+
+`:ReviewrPR` and `gp` review a pull request without checking it out: its head is fetched into a private `refs/reviewr/pr/{n}` ref and compared with its merge base against the PR's base branch; your branches, index and HEAD are untouched. Comments go to the agent as in any other view. `gh` must be installed and logged in.
+
+A PR outside the current repository is opened in a clone of it: one found under `pr.roots` (directories scanned two levels deep for a remote on github.com/owner/repo), else a blobless bare clone kept in `pr.cache_dir` (default `stdpath("cache")/reviewr/repos/{owner}/{repo}`). A bare clone has no working tree, so only the PR and commit views work there.
+
+```lua
+require("reviewr").setup({ pr = { roots = { "~/projects" } } })
+```
+
+With the Rex module, cmd+shift+r (`pr_key`) shows or hides a PR review kept apart from cmd+r's, opened on `:ReviewrPR` the first time and paired with the agent when pressed in an agent's terminal.
 
 ## Agents
 

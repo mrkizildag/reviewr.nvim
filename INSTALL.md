@@ -19,7 +19,7 @@ style:
 ```lua
 return {
   "paul-enz/reviewr.nvim",
-  cmd = { "ReviewrOpen", "ReviewrScope", "ReviewrComment", "ReviewrTurn", "ReviewrExport", "ReviewrClear" },
+  cmd = { "ReviewrOpen", "ReviewrScope", "ReviewrPR", "ReviewrComment", "ReviewrTurn", "ReviewrExport", "ReviewrClear" },
   opts = {},
 }
 ```
@@ -51,7 +51,9 @@ from. If the agent has no skills, add the file's contents to its instructions.
 Rex is in use when `rex` is on the PATH and `~/.config/rex/init.lua` exists.
 The integration binds cmd+r to show or hide a review of everything on the
 focused terminal's branch, committed or not, against the default branch, in a
-split to its right. Hidden reviews keep running with their comments.
+split to its right. Hidden reviews keep running with their comments. cmd+shift+r
+(`pr_key`) shows or hides a separate PR review, opened on `:ReviewrPR` the
+first time; it needs the `gh` CLI.
 
 Rex loads the module from the copy the user's Neovim plugin manager installed,
 so the two stay on one version. Find `rex/reviewr/init.lua` inside that copy

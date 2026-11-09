@@ -56,7 +56,8 @@ function M.prune(repo, live_blocks)
   for _, ref in ipairs(refs.stdout) do
     local r, name = ref:sub(#prefix + 2):match("^([^/]+)/(.+)$")
     local block = name and name:match("^turn%-(.+)$")
-    if r and (not repos[r] or (blocks and block and not blocks[block])) then
+    -- pr and pr-base hold fetched pull requests, not baselines
+    if r and r ~= "pr" and r ~= "pr-base" and (not repos[r] or (blocks and block and not blocks[block])) then
       git.run_sync({ "update-ref", "-d", ref }, { cwd = repo })
       log.info("turn: pruned " .. ref)
     end

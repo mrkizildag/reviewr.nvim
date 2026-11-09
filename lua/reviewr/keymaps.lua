@@ -19,6 +19,7 @@ M.defaults = {
   turn    = "t",   -- review the agent's last turn
   commit  = "gc",  -- pick a commit and review it
   base    = "gb",  -- pick the base branch for the branch view
+  pr      = "gp",  -- pick a pull request of this repository and review it
   help    = "?",   -- show every key
   quit    = "q",   -- close the review
   next    = "]c",  -- next change
@@ -46,6 +47,7 @@ M.legend = {
   { "t",  "view: last turn" },
   { "gc", "view: pick a commit" },
   { "gb", "pick the base branch" },
+  { "gp", "view: pick a pull request" },
   { "?",  "all keys" },
   { "q",  "close" },
 }
@@ -224,6 +226,7 @@ function M.apply(bufnr, overrides, opts)
     { "turn",    function() require("reviewr").set_scope("turn") end },
     { "commit",  function() require("reviewr").pick_commit() end },
     { "base",    function() require("reviewr").pick_base() end },
+    { "pr",      function() require("reviewr").pick_pr() end },
     { "help",    function() ui.toggle_help(M.legend) end },
     { "quit",    M.quit },
     { "next",    function() vim.cmd("normal! ]c") end },

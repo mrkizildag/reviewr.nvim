@@ -8,6 +8,8 @@ local TERMINAL = "com.superlogical.terminal"
 
 M.config = {
   key = "cmd+r",
+  -- opens a review of a pull request picked from GitHub, in a new pane
+  pr_key = "cmd+shift+r",
   -- run in the new Neovim; the branch scope diffs the working tree, commits
   -- and uncommitted edits alike, against its merge base with the default
   -- branch (origin/HEAD, else main or master)
@@ -55,14 +57,14 @@ end
 
 -- The Neovim runs only for the review, so closing the review quits it and
 -- the pane closes with it.
-local function open_new(session_id, anchor, cwd, label, pre)
+local function open_new(session_id, anchor, cwd, label, pre, nvim_command)
   local command = { M.config.nvim, "-c", "lua vim.g.reviewr_standalone = true" }
   if pre then
     command[#command + 1] = "-c"
     command[#command + 1] = pre
   end
   command[#command + 1] = "-c"
-  command[#command + 1] = M.config.command
+  command[#command + 1] = nvim_command or M.config.command
   return rex.call("session.new_split", {
     session_id = session_id,
     anchor_id = anchor,
@@ -144,6 +146,32 @@ end
 
 M.open = M.toggle
 
+-- Shows or hides the PR review, opening one on the PR picker the first time.
+-- It is labelled apart from cmd+r's review, so the two never stand in for
+-- each other; pressed in an agent's terminal it is paired with that agent.
+function M.open_pr(ctx)
+  local session_id = ctx.session_id or rex.session_id
+  local block_id = ctx.block_id or rex.block_id
+  local blocks = blocks_of(session_id)
+  for _, b in ipairs(blocks) do
+    if b.block_id == block_id and is_review(b) then return hide(session_id, b) end
+  end
+  local fg = foreground(session_id, block_id)
+  local agent = agent_name(fg)
+  local label = LABEL .. ":pr" .. (agent and (":" .. block_id) or "")
+  for _, b in ipairs(blocks) do
+    if b.label == label then
+      if b.placement == "placed" then return hide(session_id, b) end
+      return show(session_id, b, block_id)
+    end
+  end
+  local cwd = fg.cwd or ""
+  if cwd == "" then cwd = os.getenv("HOME") end
+  local pairing = agent and string.format("lua vim.g.reviewr_agent = { session = %q, block = %q, name = %q }",
+    session_id, block_id, agent)
+  return open_new(session_id, block_id, cwd, label, pairing, "ReviewrPR")
+end
+
 function M.setup(opts)
   for k, v in pairs(opts or {}) do M.config[k] = v end
   rex.action({
@@ -151,6 +179,17 @@ function M.setup(opts)
     title = "Show or hide the review",
     run = function(ctx) return M.toggle(ctx or {}) end,
   })
+  rex.action({
+    name = "reviewr_pr",
+    title = "Review a pull request",
+    run = function(ctx) return M.open_pr(ctx or {}) end,
+  })
+  if M.config.pr_key then
+    rex.bind(M.config.pr_key, function(ctx)
+      M.open_pr(ctx or {})
+      return true
+    end)
+  end
   if M.config.key then
     rex.bind(M.config.key, function(ctx)
       M.toggle(ctx or {})

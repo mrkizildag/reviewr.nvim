@@ -32,6 +32,11 @@ function M.git_root(cwd)
   return r.stdout[1]
 end
 
+function M.is_bare(cwd)
+  local r = M.run_sync({ "rev-parse", "--is-bare-repository" }, { cwd = cwd })
+  return r.ok and r.stdout[1] == "true"
+end
+
 function M.rev_parse(rev, cwd)
   local r = M.run_sync({ "rev-parse", rev }, { cwd = cwd })
   if not r.ok then return nil end
