@@ -15,6 +15,10 @@ M.defaults = {
   },
   keymaps = true, -- false to skip, or a table of key overrides
   files_panel_height = 10, -- rows of the changed-files panel, under its title
+  pr = {
+    roots = {}, -- directories scanned two levels deep for clones of a PR's repository
+    cache_dir = nil, -- nil => stdpath('cache')/reviewr/repos, where bare clones are made
+  },
   adapters = { "neovim-terminal", "tmux", "rex", "wezterm", "filesystem-inbox" },
   -- programs that count as agents, matched by executable name
   agents = { "claude", "codex", "opencode", "aider", "goose", "cline", "pi" },

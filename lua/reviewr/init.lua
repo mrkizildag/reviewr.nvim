@@ -10,10 +10,13 @@ local turn = require("reviewr.turn")
 local M = {}
 local setup_done = false
 
-local SCOPES = { "uncommitted", "staged", "branch", "turn", "commit" }
+local SCOPES = { "uncommitted", "staged", "branch", "turn", "commit", "pr" }
+local NEEDS_TREE = { uncommitted = true, staged = true, branch = true, turn = true }
 local EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 -- the base branch picked with gb; nil means the default branch
 local chosen_base
+-- the PR the pr scope shows, for refresh to fetch again
+local current_pr
 
 -- open: mark the turn baseline whenever a review opens; agent: when a
 -- watched agent starts working; auto: agent inside Rex, else open
@@ -83,11 +86,13 @@ function M.setup(opts)
   require("reviewr.ui").setup()
   vim.api.nvim_create_user_command("ReviewrOpen", function(o) M.open(o.fargs) end, { nargs = "*" })
   vim.api.nvim_create_user_command("ReviewrScope", function(o)
-    M.set_scope(o.fargs[1], { commit = o.fargs[2] })
+    M.set_scope(o.fargs[1], { commit = o.fargs[2], pr = tonumber(o.fargs[2]) })
   end, {
     nargs = "+",
     complete = function() return SCOPES end,
   })
+  vim.api.nvim_create_user_command("ReviewrPR", function(o) M.open_pr(o.args ~= "" and o.args or nil) end,
+    { nargs = "?" })
   vim.api.nvim_create_user_command("ReviewrComment", function(o)
     M.add_comment({ body = o.args, start = o.line1, ["end"] = o.line2 })
     require("reviewr.ui").redraw()
@@ -310,7 +315,8 @@ local function start(repo, base_ref, head_ref, scope_name, label)
     local mb = git.run_sync({ "merge-base", base_ref, head_ref }, { cwd = repo })
     if mb.ok and mb.stdout[1] then base_ref = mb.stdout[1] end
   end
-  if not git.git_root(repo) then
+  local bare = git.is_bare(repo)
+  if not bare and not git.git_root(repo) then
     vim.notify("reviewr: not in a git repository", vim.log.levels.WARN)
     return false
   end
@@ -337,7 +343,7 @@ local function start(repo, base_ref, head_ref, scope_name, label)
     turn.prune(repo, live)
   end
   local trigger = baseline_trigger()
-  if trigger == "open" or (trigger == "agent" and not turn.last_turn_sha(repo, turn_scope())) then
+  if not bare and (trigger == "open" or (trigger == "agent" and not turn.last_turn_sha(repo, turn_scope()))) then
     turn.mark_turn({ repo = repo, scope = turn_scope() })
   end
   if require("reviewr.rex").available() then
@@ -373,17 +379,210 @@ function M.open(args)
   return start(repo, base_ref, head_ref, scope_name)
 end
 
--- opts.commit: the commit the commit scope shows.
-function M.set_scope(name, opts)
-  local repo = (state.get() or {}).repo or root()
-  local base_ref, head_ref, err, label = scope_refs(repo, name, opts)
-  if err then
-    vim.notify("reviewr: " .. err, vim.log.levels.WARN)
-    return nil, err
+local function notify_warn(msg)
+  vim.notify("reviewr: " .. msg, vim.log.levels.WARN)
+  return nil, msg
+end
+
+-- "owner/name" of a github.com remote URL, lowercased, or nil.
+local function slug_of(url)
+  local slug = url:lower():gsub("/+$", ""):gsub("%.git$", ""):match("github%.com[:/]([^/:]+/[^/]+)$")
+  return slug
+end
+
+-- The remotes of repo whose URL is slug's repository, origin first.
+local function remotes_for(repo, slug)
+  local r = git.run_sync({ "config", "--get-regexp", "^remote\\..*\\.url$" }, { cwd = repo })
+  local found = {}
+  for _, l in ipairs(r.stdout) do
+    local name, url = l:match("^remote%.(.+)%.url (.*)$")
+    if name and slug_of(url) == slug:lower() then table.insert(found, name) end
   end
-  if not start(repo, base_ref, head_ref, name, label) then return nil end
+  table.sort(found, function(a, b) return a == "origin" and b ~= "origin" end)
+  return found
+end
+
+local function worktree_on(repo, branch)
+  local r = git.run_sync({ "worktree", "list", "--porcelain" }, { cwd = repo })
+  local path
+  for _, l in ipairs(r.stdout) do
+    local p = l:match("^worktree (.*)$")
+    if p then path = p end
+    if path and l == "branch refs/heads/" .. branch then return path end
+  end
+  return nil
+end
+
+local function pr_label(pr)
+  local title = pr.title
+  if vim.fn.strchars(title) > 50 then title = vim.fn.strcharpart(title, 0, 47) .. "..." end
+  return "PR #" .. pr.number .. ": " .. title
+end
+
+-- Fetches the PR's head and base into private refs; the user's own refs are
+-- left alone. with_head = false when a local worktree stands in for the head.
+local function fetch_pr(repo, pr, with_head)
+  local args = { "fetch", "--quiet", "--no-tags", pr.remote, "+refs/heads/" .. pr.base .. ":" .. pr.base_ref }
+  if with_head then table.insert(args, "+refs/pull/" .. pr.number .. "/head:" .. pr.head_ref) end
+  local r = git.run_sync(args, { cwd = repo, timeout = 120000 })
+  if r.ok then return true end
+  return nil, "could not fetch PR #" .. pr.number .. ": " .. table.concat(r.stderr, "\n")
+end
+
+-- The (base, head) commits of a fetched PR.
+local function pr_commits(repo, pr)
+  local base, head = git.rev_parse(pr.base_ref, repo), git.rev_parse(pr.head_ref, repo)
+  if not (base and head) then return nil, nil, "PR #" .. pr.number .. " is not fetched" end
+  return base, head
+end
+
+-- opts.pr: the PR number; opts.slug: its "owner/name" when the repository
+-- isn't the one at `repo`.
+local function open_pr_scope(repo, opts)
+  local github = require("reviewr.github")
+  local view, err = github.view_pr(opts.pr, opts.slug, repo)
+  if not view then return notify_warn("could not read PR #" .. tostring(opts.pr) .. ": " .. err) end
+  local slug = view.url:match("github%.com/([^/]+/[^/]+)/pull/")
+  local prefix = config_mod.get().private_ref_prefix
+  local pr = {
+    number = view.number,
+    title = view.title,
+    base = view.baseRefName,
+    remote = (slug and remotes_for(repo, slug)[1]) or "origin",
+    head_ref = prefix .. "/pr/" .. view.number,
+    base_ref = prefix .. "/pr-base/" .. view.number,
+  }
+  local owner = slug and slug:match("^[^/]+"):lower()
+  local head_owner = type(view.headRepositoryOwner) == "table" and view.headRepositoryOwner.login or ""
+  local wt = owner == head_owner:lower() and worktree_on(repo, view.headRefName) or nil
+  local ok, ferr = fetch_pr(repo, pr, not wt)
+  if not ok then return notify_warn(ferr) end
+  local base, head
+  if wt then
+    base = git.rev_parse(pr.base_ref, wt)
+    local mb = base and git.run_sync({ "merge-base", base, "HEAD" }, { cwd = wt })
+    if not (mb and mb.ok and mb.stdout[1]) then return notify_warn("no merge base with " .. pr.base) end
+    chosen_base = pr.base_ref
+    current_pr = nil
+    vim.notify("reviewr: " .. view.headRefName .. " is checked out in " .. wt .. "; reviewing it there", vim.log.levels.INFO)
+    if not start(wt, mb.stdout[1], nil, "branch", "branch vs " .. pr.base .. " (PR #" .. pr.number .. ")") then return nil end
+  else
+    local cerr
+    base, head, cerr = pr_commits(repo, pr)
+    if cerr then return notify_warn(cerr) end
+    if not start(repo, base, head, "pr", pr_label(pr)) then return nil end
+    current_pr = pr
+  end
   events.emit("ScopeChanged", { scope = scope_mod.get() })
   return scope_mod.get()
+end
+
+-- opts.commit: the commit the commit scope shows; opts.pr: the PR number of
+-- the pr scope; opts.dir: the repository to review, when not the current one.
+function M.set_scope(name, opts)
+  opts = opts or {}
+  local repo = opts.dir or (state.get() or {}).repo or root()
+  if name == "pr" then
+    if not opts.pr then return notify_warn("usage: ReviewrScope pr {number}") end
+    return open_pr_scope(repo, opts)
+  end
+  if NEEDS_TREE[name] and git.is_bare(repo) then
+    return notify_warn("no working tree in this clone; only PR and commit views work")
+  end
+  local base_ref, head_ref, err, label = scope_refs(repo, name, opts)
+  if err then return notify_warn(err) end
+  if not start(repo, base_ref, head_ref, name, label) then return nil end
+  current_pr = nil
+  events.emit("ScopeChanged", { scope = scope_mod.get() })
+  return scope_mod.get()
+end
+
+local function pr_item(pr)
+  return string.format("#%d  %s  (%s%s)", pr.number, pr.title, pr.author and pr.author.login or "?",
+    pr.isDraft and ", draft" or "")
+end
+
+-- Picks one of the open pull requests of this repository and reviews it.
+function M.pick_pr()
+  local repo = (state.get() or {}).repo or root()
+  local prs, err = require("reviewr.github").list_prs(repo)
+  if not prs then return notify_warn("could not list pull requests: " .. err) end
+  if #prs == 0 then return notify_warn("no open pull requests") end
+  require("reviewr.ui").pick(prs, { prompt = "Review pull request", format_item = pr_item }, function(choice)
+    if choice then M.set_scope("pr", { pr = choice.number, dir = repo }) end
+  end)
+end
+
+-- The first clone of slug under the configured roots, scanned two levels deep.
+local function clone_in_roots(slug)
+  for _, rootdir in ipairs(config_mod.get().pr.roots) do
+    rootdir = vim.fn.expand(rootdir)
+    for name, kind in vim.fs.dir(rootdir) do
+      if kind == "directory" then
+        local top = rootdir .. "/" .. name
+        local candidates = { top }
+        for sub, subkind in vim.fs.dir(top) do
+          if subkind == "directory" then table.insert(candidates, top .. "/" .. sub) end
+        end
+        for _, dir in ipairs(candidates) do
+          if vim.uv.fs_stat(dir .. "/.git") and #remotes_for(dir, slug) > 0 then return dir end
+        end
+      end
+    end
+  end
+  return nil
+end
+
+-- A local clone of slug: one under pr.roots, else a blobless bare clone kept
+-- in the cache directory.
+local function clone_of(slug)
+  local found = clone_in_roots(slug)
+  if found then return found end
+  local cache = config_mod.get().pr.cache_dir or (vim.fn.stdpath("cache") .. "/reviewr/repos")
+  local dir = cache .. "/" .. slug
+  if vim.uv.fs_stat(dir .. "/HEAD") then return dir end
+  vim.fn.mkdir(vim.fn.fnamemodify(dir, ":h"), "p")
+  local r = git.run_sync({ "clone", "--bare", "--filter=blob:none", "https://github.com/" .. slug .. ".git", dir },
+    { cwd = cache, timeout = 600000 })
+  if not r.ok then return nil, "could not clone " .. slug .. ": " .. table.concat(r.stderr, "\n") end
+  return dir
+end
+
+local function open_pr_in(slug, number)
+  local here = root()
+  local dir = here
+  if #remotes_for(here, slug) == 0 then
+    local err
+    dir, err = clone_of(slug)
+    if not dir then return notify_warn(err) end
+  end
+  vim.cmd("cd " .. vim.fn.fnameescape(dir))
+  return M.set_scope("pr", { pr = number, slug = slug, dir = dir })
+end
+
+-- arg: a number (this repository), "owner/name#number" or a PR URL. Without
+-- one, picks among the open PRs I authored or was asked to review.
+function M.open_pr(arg)
+  if not arg then
+    local prs, err = require("reviewr.github").search_prs()
+    if not prs then return notify_warn("could not search pull requests: " .. err) end
+    if #prs == 0 then return notify_warn("no open pull requests of yours") end
+    require("reviewr.ui").pick(prs, {
+      prompt = "Review pull request",
+      format_item = function(pr)
+        return string.format("%s #%d  %s", pr.repository.nameWithOwner, pr.number, pr.title)
+      end,
+    }, function(choice)
+      if choice then open_pr_in(choice.repository.nameWithOwner, choice.number) end
+    end)
+    return
+  end
+  local n = arg:match("^#?(%d+)$")
+  if n then return M.set_scope("pr", { pr = tonumber(n) }) end
+  local slug, number = arg:match("^([%w_.-]+/[%w_.-]+)#(%d+)$")
+  if not slug then slug, number = arg:match("github%.com/([^/]+/[^/]+)/pull/(%d+)") end
+  if not slug then return notify_warn("usage: ReviewrPR [number | owner/repo#number | pull request URL]") end
+  return open_pr_in(slug, tonumber(number))
 end
 
 -- Picks one of the last 100 commits on HEAD and reviews just that commit.
@@ -416,7 +615,16 @@ function M.pick_base()
 end
 
 function M.refresh()
-  if not state.get() or not state.get().files then return false end
+  local s = state.get()
+  if not s or not s.files then return false end
+  if current_pr and (scope_mod.get() or {}).name == "pr" then
+    local ok, err = fetch_pr(s.repo, current_pr, true)
+    if not ok then notify_warn(err); return false end
+    local base, head, cerr = pr_commits(s.repo, current_pr)
+    if cerr then notify_warn(cerr); return false end
+    local mb = git.run_sync({ "merge-base", base, head }, { cwd = s.repo })
+    s.base_ref, s.head_ref = mb.ok and mb.stdout[1] or base, head
+  end
   return load(require("reviewr.ui").panes().file, nil, true)
 end
 

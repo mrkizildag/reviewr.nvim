@@ -28,7 +28,16 @@ COMMANDS                                                *reviewr-commands*
         uncommitted, staged, branch (the working tree, commits and all,
         against its merge base with the default branch or the one picked
         with gb), commit {sha} (that commit alone) or turn (the
-        working tree against the last turn baseline).
+        working tree against the last turn baseline) or pr {number} (a
+        pull request of this repository, fetched into a private ref and
+        shown against its merge base; if its branch is checked out in a
+        worktree, that worktree's branch view). Needs the gh CLI.
+  :ReviewrPR [number|owner/repo#number|url]
+        Review a pull request. Without an argument, pick among the open
+        pull requests you authored or were asked to review. One outside
+        the current repository opens in a clone found under the pr.roots
+        option, else in a bare clone under pr.cache_dir (no working tree:
+        only PR and commit views work there).
   :[range]ReviewrComment {text}
         Comment on the current line or range.
   :ReviewrTurn
@@ -57,6 +66,7 @@ In the diff panes:
   u b t view: uncommitted / branch / last turn
   gc    pick a commit and review just that commit
   gb    pick the base branch for the branch view
+  gp    pick an open pull request of this repository and review it
   ?     all keys
   q     close. With unsent comments (new, or edited since the last send or
         copy) it asks once: <CR> closes, <Right> then
@@ -65,7 +75,7 @@ In the diff panes:
 
 The changed-files panel has the same keys, except those that act on a line
 of the diff (c, e, d, n, N, ]c, [c); there <CR> opens the file under the
-cursor. The pickers (gc, gb, S) open a small list: j/k or the arrows move,
+cursor. The pickers (gc, gb, gp, S) open a small list: j/k or the arrows move,
 <CR> picks, <Esc> cancels.
 
 AGENTS                                                  *reviewr-agents*

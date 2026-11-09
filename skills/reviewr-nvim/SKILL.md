@@ -30,6 +30,7 @@ nvim --headless -c 'lua io.stdout:write(tostring(pcall(require, "reviewr")) .. "
 | uncommitted changes | `ReviewrOpen` |
 | one commit | `ReviewrScope commit <sha>` |
 | what is staged | `ReviewrScope staged` |
+| a GitHub pull request, without checking it out (needs `gh`) | `ReviewrScope pr <number>` in its repository, or `ReviewrPR owner/repo#<number>` |
 | what you (or another agent) changed in your last turn | `ReviewrScope turn` |
 
 In Rex the plugin watches the agents it can see: when one starts working, it
