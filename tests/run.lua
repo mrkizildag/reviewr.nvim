@@ -505,6 +505,206 @@ test("the picker moves with j and arrows, picks with Enter, cancels with Esc", f
   eq(got, nil)
 end)
 
+-- the plain text of each line of a rendered row
+local function plain(lines)
+  return vim.tbl_map(function(segs)
+    return table.concat(vim.tbl_map(function(seg) return seg[1] end, segs))
+  end, lines)
+end
+local function press_keys(keys)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+end
+local function float_count()
+  return #vim.tbl_filter(function(w) return vim.api.nvim_win_get_config(w).relative ~= "" end, vim.api.nvim_list_wins())
+end
+
+test("the picker sits on a full-editor backdrop that closes with it", function()
+  local function backdrops()
+    return vim.tbl_filter(function(w)
+      local c = vim.api.nvim_win_get_config(w)
+      return c.relative ~= "" and c.width == vim.o.columns and c.height == vim.o.lines - vim.o.cmdheight
+        and c.focusable == false
+    end, vim.api.nvim_list_wins())
+  end
+  local before, covers = float_count(), #backdrops()
+  ui.pick({ "one", "two" }, { prompt = "Pick" }, function() end)
+  eq(float_count(), before + 2)
+  eq(#backdrops(), covers + 1)
+  press_keys("<CR>")
+  eq(float_count(), before)
+  ui.pick({ "one" }, { prompt = "Pick" }, function() end)
+  press_keys("<Esc>")
+  eq(float_count(), before)
+end)
+
+test("the picker is centered and cuts long rows with an ellipsis inside the box", function()
+  local long = string.rep("wide行", 40)
+  local win = ui.pick({ long, "short" }, { prompt = "Pick" }, function() end)
+  local c = vim.api.nvim_win_get_config(win)
+  eq(c.col, math.floor((vim.o.columns - (c.width + 2)) / 2))
+  local row = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, 1, false)[1]
+  assert(row:sub(-3) == "…", "ends with an ellipsis")
+  assert(vim.fn.strwidth(row) <= c.width, "fits the box")
+  press_keys("<Esc>")
+end)
+
+test("a notification float taking focus doesn't cancel the picker", function()
+  local got = "unset"
+  local win = ui.pick({ "one", "two" }, { prompt = "Pick" }, function(c) got = c end)
+  local nbuf = vim.api.nvim_create_buf(false, true)
+  local note = vim.api.nvim_open_win(nbuf, true, { relative = "editor", row = 0, col = 0, width = 10, height = 1 })
+  vim.wait(100, function() return vim.api.nvim_get_current_win() == win end)
+  eq(got, "unset")
+  eq(vim.api.nvim_get_current_win(), win, "focus handed back")
+  press_keys("<Esc>")
+  eq(got, nil)
+  vim.api.nvim_win_close(note, true)
+end)
+
+test("a wide editor shows the item's details beside the list, never a stale result", function()
+  local columns = vim.o.columns
+  vim.o.columns = 140
+  local pending = {}
+  local function panel_text()
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      local b = vim.api.nvim_win_get_buf(w)
+      if vim.api.nvim_win_get_config(w).relative ~= "" and vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] ~= nil
+        and vim.api.nvim_win_get_config(w).title and vim.api.nvim_win_get_config(w).title[1][1] == " Details " then
+        return table.concat(vim.api.nvim_buf_get_lines(b, 0, -1, false), "\n")
+      end
+    end
+  end
+  ui.pick({ "one", "two" }, {
+    prompt = "Pick",
+    preview = function(item, done)
+      if item == "one" then pending.one = done else done({ "details of " .. item }) end
+    end,
+  }, function() end)
+  vim.wait(300, function() return pending.one ~= nil end)
+  eq(panel_text(), "Loading…")
+  -- headless Neovim doesn't run CursorMoved between feedkeys and the next wait
+  press_keys("j")
+  vim.cmd("doautocmd CursorMoved")
+  vim.wait(300, function() return panel_text() == "details of two" end)
+  eq(panel_text(), "details of two")
+  pending.one({ "details of one" })
+  eq(panel_text(), "details of two", "a slow result for the previous item is dropped")
+  press_keys("k")
+  vim.cmd("doautocmd CursorMoved")
+  eq(panel_text(), "details of one", "cached")
+  vim.o.columns = 100
+  vim.cmd("doautocmd VimResized")
+  eq(panel_text(), nil, "no panel below 120 columns")
+  press_keys("<Esc>")
+  vim.o.columns = columns
+end)
+
+test("below 120 columns there is no details panel", function()
+  local before = float_count()
+  ui.pick({ "one" }, { prompt = "Pick", preview = function() error("not called") end }, function() end)
+  eq(float_count(), before + 2)
+  vim.wait(150)
+  press_keys("<Esc>")
+end)
+
+test("PR details render the checks, the counts and an empty description", function()
+  local lines, marks, mark = reviewr.pr_details_lines({
+    number = 7, title = "Add b", state = "OPEN", isDraft = false, author = { login = "mrk" },
+    headRefName = "feat", baseRefName = "main", reviewDecision = "CHANGES_REQUESTED", mergeable = "CONFLICTING",
+    additions = 10, deletions = 2, changedFiles = 3, body = "",
+    url = "https://github.com/acme/widgets/pull/7",
+    statusCheckRollup = {
+      { __typename = "CheckRun", name = "unit", workflowName = "CI", status = "COMPLETED", conclusion = "SUCCESS" },
+      { __typename = "CheckRun", name = "lint", workflowName = "CI", status = "COMPLETED", conclusion = "FAILURE" },
+      { __typename = "CheckRun", name = "e2e", workflowName = "", status = "IN_PROGRESS" },
+      { __typename = "CheckRun", name = "docs", status = "COMPLETED", conclusion = "SKIPPED" },
+      { __typename = "StatusContext", context = "deploy", state = "PENDING" },
+    },
+  })
+  local icon = ui.icon
+  eq(lines, { "Add b", " Open   Changes requested   Conflicts ", "", icon("branch") .. " feat → main",
+    icon("user") .. " mrk", "+10 -2 · 3 files", ui.RULE, "Checks", "✓ 1  ✗ 1  ● 2  ○ 1", "✗ CI / lint", "● e2e",
+    "● deploy", ui.RULE, "Description", "No description." })
+  local groups = {}
+  for _, m in ipairs(marks) do groups[m[4]] = true end
+  for _, g in ipairs({ "ReviewrBadgeOpen", "ReviewrBadgeChanges", "ReviewrBadgeConflicts", "ReviewrFail",
+    "ReviewrPending", "ReviewrOk", "ReviewrAdded", "ReviewrRemoved" }) do
+    assert(groups[g], g .. " is used")
+  end
+  for _, g in ipairs({ "ReviewrBadgeOpen", "ReviewrBadgeDraft", "ReviewrBadgeMerged", "ReviewrBadgeApproved" }) do
+    assert(vim.api.nvim_get_hl(0, { name = g }).bg, g .. " has a background")
+  end
+  eq(mark, { "✗", "ReviewrFail" }, "the list's checks mark")
+  local passed = reviewr.pr_details_lines({ number = 1, title = "t", state = "OPEN", statusCheckRollup = {
+    { __typename = "CheckRun", name = "a", status = "COMPLETED", conclusion = "SUCCESS" } }, body = "text" })
+  eq(passed[9], "All 1 checks passed")
+  eq(passed[#passed], "text")
+end)
+
+test("rows of two lines: j/k and the arrows move by item, Enter picks that item, the selection covers both lines", function()
+  local items = { { n = 1 }, { n = 2 }, { n = 3 } }
+  local got
+  local win = ui.pick(items, {
+    prompt = "Pick",
+    render_item = function(it) return { { { "title " .. it.n } }, { { "  meta", "ReviewrDim" } } } end,
+  }, function(c) got = c end)
+  local buf = vim.api.nvim_win_get_buf(win)
+  eq(#vim.api.nvim_buf_get_lines(buf, 0, -1, false), 6)
+  press_keys("jj<Up>")
+  eq(vim.api.nvim_win_get_cursor(win)[1], 3)
+  local ns = vim.api.nvim_get_namespaces().reviewr_pick
+  local covered = {}
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+    if m[4].line_hl_group then table.insert(covered, m[2]) end
+  end
+  eq(covered, { 2, 3 })
+  press_keys("<CR>")
+  eq(got, items[2])
+end)
+
+test("headings in a picker are shown but never selected", function()
+  local a, b = { n = "a" }, { n = "b" }
+  local got
+  local win = ui.pick({ { heading = "Yours" }, a, { heading = "Requested" }, b }, {
+    prompt = "Pick", render_item = function(it) return { { { it.n } } } end,
+  }, function(c) got = c end)
+  eq(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, 3, false), { " Yours", " a", " Requested" })
+  eq(vim.api.nvim_win_get_cursor(win)[1], 2, "starts on the first item")
+  press_keys("k")
+  eq(vim.api.nvim_win_get_cursor(win)[1], 2)
+  press_keys("j")
+  eq(vim.api.nvim_win_get_cursor(win)[1], 4, "skips the heading")
+  press_keys("<CR>")
+  eq(got, b)
+end)
+
+test("a row gains a checks mark once its details are cached", function()
+  local columns = vim.o.columns
+  vim.o.columns = 140
+  local win = ui.pick({ "one" }, {
+    prompt = "Pick",
+    preview = function(_, done) done({ "x" }, { mark = { "✓", "ReviewrOk" } }) end,
+  }, function() end)
+  local buf = vim.api.nvim_win_get_buf(win)
+  eq(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1], " one")
+  vim.wait(300, function() return vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]:sub(-3) == "✓" end)
+  local row = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+  eq(row:sub(-3), "✓")
+  eq(vim.fn.strwidth(row), vim.api.nvim_win_get_config(win).width - 1, "right-aligned")
+  press_keys("<Esc>")
+  vim.o.columns = columns
+end)
+
+test("icons = false falls back to plain unicode", function()
+  local cfg = require("reviewr.config").get()
+  cfg.icons = false
+  eq({ ui.icon("pr_open"), ui.icon("pr_draft"), ui.icon("branch") }, { "●", "○", "⎇" })
+  eq(ui.title("pr_open", "Pull requests"), "● Pull requests")
+  eq(ui.title("commit", "Review commit"), "Review commit")
+  cfg.icons = true
+  assert(ui.icon("pr_open") ~= "●", "Nerd Font glyph by default")
+end)
+
 test("refresh keeps both panes where they were", function()
   git("checkout -q -- .")
   write(repo .. "/f.txt", vim.split(string.rep("line\n", 60), "\n", { trimempty = true }))
@@ -836,7 +1036,7 @@ test("the diff panes mark the cursor line by its number only, so no underline cr
   eq(vim.wo[ui.files_panel().win].cursorlineopt, "line", "the panel highlights its whole row")
   vim.api.nvim_set_current_win(d.right_win)
   local picker = ui.pick({ "one", "two" }, { prompt = "Pick" }, function() end)
-  eq(vim.wo[picker].cursorlineopt, "line", "the picker highlights its whole row")
+  eq(vim.wo[picker].cursorline, false, "the picker draws its own selection")
   vim.api.nvim_win_close(picker, true)
   vim.o.cursorline = false
 end)
@@ -987,17 +1187,36 @@ test("gp lists the open PRs of the repository and opens the one picked", functio
   assert(vim.fn.maparg("gp", "n", false, true).buffer == 1, "gp not bound in the diff")
   local select, shown = ui.pick, nil
   ui.pick = function(items, opts, cb)
-    shown = vim.tbl_map(opts.format_item, items)
+    shown = vim.tbl_map(function(pr) return plain(opts.render_item(pr)) end, items)
     cb(items[2])
   end
-  local list = { { number = 3, title = "Other", author = { login = "ann" }, isDraft = false },
+  local list = { { number = 3, title = "Other", author = { login = "ann" }, isDraft = false, updatedAt = "2020-01-01T00:00:00Z" },
     { number = 7, title = "Add b", author = { login = "mrk" }, isDraft = true } }
   gh_stub(function(args) if args[2] == "list" then return list end return view(7) end)
   reviewr.pick_pr()
   ui.pick = select
-  eq(shown, { "#3  Other  (ann)", "#7  Add b  (mrk, draft)" })
+  eq({ shown[1][1], shown[1][2]:match("^(.-) · %d+y ago$"), shown[2] }, {
+    ui.icon("pr_open") .. " Other", "  #3 · ann", { ui.icon("pr_draft") .. " Add b", "  #7 · mrk" },
+  })
   eq(require("reviewr.scope").get().label, "PR #7: Add b")
   leave_pr_review()
+end)
+
+test(":ReviewrPR without an argument lists Yours and Review requested, a PR in both under Yours", function()
+  local function found(n, repo)
+    return { number = n, title = "T" .. n, author = { login = "x" }, isDraft = false, url = "https://github.com/" .. repo .. "/pull/" .. n,
+      repository = { nameWithOwner = repo }, updatedAt = "2020-01-01T00:00:00Z" }
+  end
+  gh_stub(function(args)
+    if vim.tbl_contains(args, "--author=@me") then return { found(1, "acme/widgets"), found(2, "acme/other") } end
+    return { found(2, "acme/other"), found(3, "acme/lib") }
+  end)
+  local select, rows = ui.pick, nil
+  ui.pick = function(items, opts) rows = { items = items, render = opts.render_item } end
+  reviewr.open_pr()
+  ui.pick = select
+  eq(vim.tbl_map(function(it) return it.heading or it.number end, rows.items), { "Yours", 1, 2, "Review requested", 3 })
+  eq(plain(rows.render(rows.items[2]))[2]:match("^  acme/widgets · #1"), "  acme/widgets · #1")
 end)
 
 test("a PR whose head branch is checked out in a worktree opens that worktree's branch view", function()

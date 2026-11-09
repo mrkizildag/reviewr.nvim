@@ -160,7 +160,7 @@ The bar above the change pane always shows the next step. `?` lists every key.
 
 The changed-files panel has the same keys, except those that act on a line of the diff (`c`, `e`, `d`, `n`, `N`, `]c`, `[c`); there `<CR>` opens the file under the cursor.
 
-The pickers (`gc`, `gb`, `gp`, `S`) open a small list: `j`/`k` or the arrows move, Enter picks, Esc cancels.
+The pickers (`gc`, `gb`, `gp`, `S`) open a small centered list over a blank view: `j`/`k` or the arrows move, Enter picks, Esc cancels. The selected row has a coloured bar and background. Pull requests take two lines (state icon and title; then repo, `#number`, author, age); `:ReviewrPR` without an argument groups them under "Yours" and "Review requested". The pull request pickers also show a Details panel beside the list (description, checks, review state) when Neovim is at least 120 columns wide; `Ctrl-d`/`Ctrl-u` scroll it: title, state, review and conflict badges, branches, diff size, a checks summary with the failing and pending ones listed, and the description rendered as markdown. Once a PR's details have loaded its row shows a checks mark (`✓`, `✗` or `●`). Icons are Nerd Font glyphs; `setup({ icons = false })` uses plain unicode.
 
 All buffer-local and remappable through the `keymaps` option or `require("reviewr.keymaps").set_defaults()`.
 
