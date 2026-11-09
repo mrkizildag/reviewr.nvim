@@ -497,9 +497,162 @@ function M.set_scope(name, opts)
   return scope_mod.get()
 end
 
-local function pr_item(pr)
-  return string.format("#%d  %s  (%s%s)", pr.number, pr.title, pr.author and pr.author.login or "?",
-    pr.isDraft and ", draft" or "")
+local CHECK_FAILED = { FAILURE = true, TIMED_OUT = true, CANCELLED = true, ACTION_REQUIRED = true,
+  STARTUP_FAILURE = true, ERROR = true }
+
+-- "passed", "failed", "pending" or "skipped" for one statusCheckRollup entry,
+-- and the name to show for it.
+local function classify_check(c)
+  if c.__typename == "StatusContext" then
+    local state = c.state or ""
+    return (state == "SUCCESS" and "passed") or (CHECK_FAILED[state] and "failed") or "pending", c.context
+  end
+  local name = (c.workflowName and c.workflowName ~= "") and (c.workflowName .. " / " .. c.name) or c.name
+  if c.status ~= "COMPLETED" then return "pending", name end
+  local conclusion = c.conclusion or ""
+  if conclusion == "SUCCESS" then return "passed", name end
+  if conclusion == "NEUTRAL" or conclusion == "SKIPPED" then return "skipped", name end
+  return CHECK_FAILED[conclusion] and "failed" or "pending", name
+end
+
+-- "3h ago" for an ISO 8601 UTC timestamp. Both wall clocks are read the same
+-- way, so the zone cancels out.
+local function ago(iso)
+  local y, mo, d, h, mi, s = (iso or ""):match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+  if not y then return nil end
+  local then_ = os.time({ year = y, month = mo, day = d, hour = h, min = mi, sec = s, isdst = false })
+  local utc = os.date("!*t")
+  utc.isdst = false
+  local secs = math.max(0, os.time(utc) - then_)
+  if secs < 60 then return "just now" end
+  for _, unit in ipairs({ { 3600, 60, "m" }, { 86400, 3600, "h" }, { 86400 * 30, 86400, "d" },
+    { 86400 * 365, 86400 * 30, "mo" } }) do
+    if secs < unit[1] then return math.floor(secs / unit[2]) .. unit[3] .. " ago" end
+  end
+  return math.floor(secs / (86400 * 365)) .. "y ago"
+end
+
+local REVIEW_BADGE = {
+  APPROVED = { "Approved", "ReviewrBadgeApproved" },
+  CHANGES_REQUESTED = { "Changes requested", "ReviewrBadgeChanges" },
+  REVIEW_REQUIRED = { "Review required", "ReviewrBadgeReview" },
+}
+local STATE_BADGE = {
+  OPEN = { "Open", "ReviewrBadgeOpen" }, MERGED = { "Merged", "ReviewrBadgeMerged" },
+  CLOSED = { "Closed", "ReviewrBadgeClosed" },
+}
+
+-- The details panel of a PR: lines, highlights ({ line, col_start, col_end,
+-- group }, 0-based line, byte columns) and the { text, group } mark the list
+-- shows for its checks (nil without any).
+function M.pr_details_lines(d)
+  local ui = require("reviewr.ui")
+  local lines, marks = {}, {}
+  local function add(text, hl)
+    lines[#lines + 1] = text
+    if hl then marks[#marks + 1] = { #lines - 1, 0, #text, hl } end
+  end
+  -- pieces: { text, hl? } joined by `sep`, each highlighted on its own
+  local function add_pieces(pieces, sep)
+    local text = ""
+    for i, piece in ipairs(pieces) do
+      if i > 1 then text = text .. sep end
+      if piece[2] then marks[#marks + 1] = { #lines, #text, #text + #piece[1], piece[2] } end
+      text = text .. piece[1]
+    end
+    lines[#lines + 1] = text
+  end
+
+  add(d.title or "", "ReviewrHeading")
+  local badges = { d.isDraft and { "Draft", "ReviewrBadgeDraft" } or STATE_BADGE[d.state] or { d.state or "?" } }
+  if REVIEW_BADGE[d.reviewDecision] then table.insert(badges, REVIEW_BADGE[d.reviewDecision]) end
+  if d.mergeable == "CONFLICTING" then table.insert(badges, { "Conflicts", "ReviewrBadgeConflicts" }) end
+  add_pieces(vim.tbl_map(function(b) return { " " .. b[1] .. " ", b[2] } end, badges), " ")
+  add("")
+  add(ui.icon("branch") .. " " .. (d.headRefName or "?") .. " → " .. (d.baseRefName or "?"), "ReviewrDim")
+  local updated = ago(d.updatedAt)
+  add(ui.icon("user") .. " " .. (d.author and d.author.login or "?") .. (updated and (" · updated " .. updated) or ""),
+    "ReviewrDim")
+  add_pieces({ { "+" .. (d.additions or 0), "ReviewrAdded" }, { "-" .. (d.deletions or 0), "ReviewrRemoved" },
+    { "· " .. (d.changedFiles or 0) .. " files", "ReviewrDim" } }, " ")
+  add(ui.RULE)
+
+  local counts = { passed = 0, failed = 0, pending = 0, skipped = 0 }
+  local failing, pending = {}, {}
+  local total = 0
+  for _, c in ipairs(d.statusCheckRollup or {}) do
+    local kind, name = classify_check(c)
+    counts[kind] = counts[kind] + 1
+    total = total + 1
+    if kind == "failed" then table.insert(failing, name) elseif kind == "pending" then table.insert(pending, name) end
+  end
+  add("Checks", "ReviewrHeading")
+  if total == 0 then
+    add("No checks", "ReviewrDim")
+  elseif counts.failed == 0 and counts.pending == 0 then
+    add(string.format("All %d checks passed", total), "ReviewrOk")
+  else
+    local pieces = {}
+    for _, part in ipairs({ { "passed", "✓", "ReviewrOk" }, { "failed", "✗", "ReviewrFail" },
+      { "pending", "●", "ReviewrPending" }, { "skipped", "○", "ReviewrDim" } }) do
+      if counts[part[1]] > 0 then table.insert(pieces, { part[2] .. " " .. counts[part[1]], part[3] }) end
+    end
+    add_pieces(pieces, "  ")
+    for _, name in ipairs(failing) do
+      add("✗ " .. name)
+      marks[#marks + 1] = { #lines - 1, 0, #"✗", "ReviewrFail" }
+    end
+    for _, name in ipairs(pending) do
+      add("● " .. name)
+      marks[#marks + 1] = { #lines - 1, 0, #"●", "ReviewrPending" }
+    end
+  end
+  add(ui.RULE)
+  add("Description", "ReviewrHeading")
+  local body = vim.trim((d.body or ""):gsub("\r", ""))
+  if body == "" then
+    add("No description.", "ReviewrDim")
+  else
+    vim.list_extend(lines, vim.split(body, "\n"))
+  end
+
+  local mark
+  if counts.failed > 0 then mark = { "✗", "ReviewrFail" }
+  elseif counts.pending > 0 then mark = { "●", "ReviewrPending" }
+  elseif counts.passed > 0 then mark = { "✓", "ReviewrOk" } end
+  return lines, marks, mark
+end
+
+-- ui.pick's preview for PR rows; slug_of(pr): "owner/name" when not the repository at dir.
+local function pr_preview(dir, slug_of)
+  return function(pr, done)
+    require("reviewr.github").pr_details(pr.number, slug_of and slug_of(pr) or nil, dir, function(details, err)
+      if not details then return done({ "Could not load details: " .. tostring(err) }) end
+      local lines, marks, mark = M.pr_details_lines(details)
+      done(lines, { markdown = true, highlights = marks, mark = mark })
+    end)
+  end
+end
+
+-- Two-line row for a PR: state icon and title, then repo (when slug_of is
+-- given), #number, author and age, dimmed.
+local function pr_row(slug_of)
+  local ui = require("reviewr.ui")
+  return function(pr)
+    local icon = pr.isDraft and { ui.icon("pr_draft"), "ReviewrDim" } or { ui.icon("pr_open"), "ReviewrOk" }
+    local meta = {}
+    if slug_of then table.insert(meta, { slug_of(pr), "ReviewrDim" }) end
+    table.insert(meta, { "#" .. pr.number, "ReviewrNumber" })
+    table.insert(meta, { pr.author and pr.author.login or "?", "ReviewrDim" })
+    local age = ago(pr.updatedAt)
+    if age then table.insert(meta, { age, "ReviewrDim" }) end
+    local second = { { "  " } }
+    for i, m in ipairs(meta) do
+      if i > 1 then table.insert(second, { " · ", "ReviewrDim" }) end
+      table.insert(second, m)
+    end
+    return { { icon, { " " .. pr.title } }, second }
+  end
 end
 
 -- Picks one of the open pull requests of this repository and reviews it.
@@ -508,7 +661,12 @@ function M.pick_pr()
   local prs, err = require("reviewr.github").list_prs(repo)
   if not prs then return notify_warn("could not list pull requests: " .. err) end
   if #prs == 0 then return notify_warn("no open pull requests") end
-  require("reviewr.ui").pick(prs, { prompt = "Review pull request", format_item = pr_item }, function(choice)
+  require("reviewr.ui").pick(prs, {
+    prompt = require("reviewr.ui").title("pr_open", "Pull requests"),
+    action = "review",
+    render_item = pr_row(),
+    preview = pr_preview(repo),
+  }, function(choice)
     if choice then M.set_scope("pr", { pr = choice.number, dir = repo }) end
   end)
 end
@@ -567,11 +725,20 @@ function M.open_pr(arg)
     local prs, err = require("reviewr.github").search_prs()
     if not prs then return notify_warn("could not search pull requests: " .. err) end
     if #prs == 0 then return notify_warn("no open pull requests of yours") end
-    require("reviewr.ui").pick(prs, {
-      prompt = "Review pull request",
-      format_item = function(pr)
-        return string.format("%s #%d  %s", pr.repository.nameWithOwner, pr.number, pr.title)
-      end,
+    local function slug_of(pr) return pr.repository.nameWithOwner end
+    local rows = {}
+    for _, section in ipairs({ { "yours", "Yours" }, { "requested", "Review requested" } }) do
+      local group = vim.tbl_filter(function(pr) return pr.section == section[1] end, prs)
+      if #group > 0 then
+        table.insert(rows, { heading = section[2] })
+        vim.list_extend(rows, group)
+      end
+    end
+    require("reviewr.ui").pick(rows, {
+      prompt = require("reviewr.ui").title("pr_open", "Pull requests"),
+      action = "review",
+      render_item = pr_row(slug_of),
+      preview = pr_preview(nil, slug_of),
     }, function(choice)
       if choice then open_pr_in(choice.repository.nameWithOwner, choice.number) end
     end)
@@ -591,8 +758,11 @@ function M.pick_commit()
   local log = git.run_sync({ "log", "-n", "100", "--format=%h%x09%s" }, { cwd = repo }).stdout or {}
   local items = vim.tbl_filter(function(l) return l ~= "" end, log)
   require("reviewr.ui").pick(items, {
-    prompt = "Review commit",
-    format_item = function(l) return (l:gsub("\t", "  ")) end,
+    prompt = require("reviewr.ui").title("commit", "Review commit"),
+    render_item = function(l)
+      local sha, subject = l:match("^(%S+)\t(.*)$")
+      return { { { sha, "ReviewrNumber" }, { "  " .. subject } } }
+    end,
   }, function(choice)
     if choice then M.set_scope("commit", { commit = choice:match("^(%S+)") }) end
   end)
@@ -607,7 +777,8 @@ function M.pick_base()
   local items = vim.tbl_filter(function(r)
     return r ~= "" and r ~= current and not r:match("/HEAD$") and r ~= "origin"
   end, refs)
-  require("reviewr.ui").pick(items, { prompt = "Compare the branch against" }, function(choice)
+  local ui = require("reviewr.ui")
+  ui.pick(items, { prompt = ui.title("branch", "Compare the branch against") }, function(choice)
     if not choice then return end
     chosen_base = choice
     M.set_scope("branch")

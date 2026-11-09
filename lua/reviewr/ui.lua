@@ -35,9 +35,51 @@ local function highlights()
     ReviewrButton = "PmenuSel",
     ReviewrAdded = "Added",
     ReviewrRemoved = "Removed",
+    ReviewrPending = "DiagnosticWarn",
+    ReviewrOk = "DiagnosticOk",
+    ReviewrFail = "DiagnosticError",
+    ReviewrDim = "Comment",
+    ReviewrNumber = "Number",
+    ReviewrHeading = "Title",
+    ReviewrRule = "FloatBorder",
+    ReviewrPickSel = "CursorLine",
+    ReviewrPickBar = "Function",
+    ReviewrPickBorder = "Function",
   }) do
     vim.api.nvim_set_hl(0, name, { link = link, default = true })
   end
+  -- pills: a colour from the theme as background, the editor background as text
+  local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  local text = normal.bg or (vim.o.background == "light" and 0xffffff or 0x000000)
+  for name, source in pairs(M.BADGES) do
+    local src = vim.api.nvim_get_hl(0, { name = source, link = false })
+    vim.api.nvim_set_hl(0, "ReviewrBadge" .. name, { fg = text, bg = src.fg, bold = true })
+  end
+end
+
+-- badge name -> the highlight group whose colour it takes
+M.BADGES = {
+  Open = "DiagnosticOk", Draft = "Comment", Merged = "Special", Closed = "DiagnosticError",
+  Approved = "DiagnosticOk", Changes = "DiagnosticError", Review = "DiagnosticWarn", Conflicts = "DiagnosticError",
+}
+
+local ICONS = {
+  pr_open = { "\u{f407}", "●" },
+  pr_draft = { "\u{f4dd}", "○" },
+  branch = { "\u{e725}", "⎇" },
+  user = { "\u{f007}", "@" },
+  commit = { "\u{f417}", "" },
+}
+
+-- The glyph for `name`: a Nerd Font icon, or plain unicode when `icons` is off.
+function M.icon(name)
+  return ICONS[name][require("reviewr.config").get().icons and 1 or 2]
+end
+
+-- A box title: the icon (when there is one) and the text.
+function M.title(icon, text)
+  local glyph = M.icon(icon)
+  return glyph ~= "" and (glyph .. " " .. text) or text
 end
 
 function M.setup(opts)
@@ -360,40 +402,282 @@ end
 
 -- ---------- pick ----------
 
--- A list in a box like the confirm box, taking vim.ui.select's arguments:
--- j/k or the arrows move, <CR> picks, <Esc> or q cancels (on_choice(nil)).
+local BACKDROP_Z, PICK_Z = 55, 60
+local PANEL_MIN_COLUMNS = 120
+local pick_ns
+
+-- A line of a Details panel that fills the panel's width with a thin rule.
+M.RULE = "\1"
+
+-- text cut to `width` display columns, ending in … when it was cut
+function M.truncate(text, width)
+  if vim.fn.strwidth(text) <= width then return text end
+  local n = vim.fn.strchars(text)
+  while n > 0 and vim.fn.strwidth(vim.fn.strcharpart(text, 0, n)) > width - 1 do n = n - 1 end
+  return vim.fn.strcharpart(text, 0, n) .. "…"
+end
+
+-- One list row: segments { { text, hl? }, ... } inside a 1-col pad each side,
+-- cut to `width`, with an optional { text, hl } right-aligned. Returns the
+-- text and its highlights as { col_start, col_end, hl } (bytes).
+local function compose(segments, width, mark)
+  local text, spans = " ", {}
+  local room = width - 2 - (mark and vim.fn.strwidth(mark[1]) + 1 or 0)
+  for _, seg in ipairs(segments) do
+    if room <= 0 then break end
+    local piece = M.truncate(seg[1], room)
+    if seg[2] then table.insert(spans, { #text, #text + #piece, seg[2] }) end
+    text = text .. piece
+    room = room - vim.fn.strwidth(piece)
+    if piece ~= seg[1] then break end
+  end
+  if mark then
+    text = text .. string.rep(" ", width - 1 - vim.fn.strwidth(text) - vim.fn.strwidth(mark[1]))
+    table.insert(spans, { #text, #text + #mark[1], mark[2] })
+    text = text .. mark[1]
+  end
+  return text, spans
+end
+
+-- A list in a centered box over a blank backdrop, taking vim.ui.select's
+-- arguments: j/k or the arrows move, <CR> picks, <Esc> or q cancels
+-- (on_choice(nil)).
+--   opts.prompt       box title
+--   opts.format_item  one plain line per item, or
+--   opts.render_item  item -> lines, each a list of { text, hl? } segments
+--   opts.action       the <CR> hint in the footer (default "select")
+--   opts.preview      (item, done) fills a Details panel beside the list when
+--                     the editor is wide enough; done(lines, { markdown?,
+--                     highlights?, mark? }), mark being the { text, hl }
+--                     shown at the right of the item's first line.
+-- An item that is a table with a `heading` string is a heading row: shown,
+-- never selected.
 function M.pick(items, opts, on_choice)
   opts = opts or {}
   local format = opts.format_item or tostring
-  local lines = vim.tbl_map(function(it) return " " .. format(it) .. " " end, items)
-  local width = vim.fn.strwidth(opts.prompt or "") + 4
-  for _, l in ipairs(lines) do width = math.max(width, vim.fn.strwidth(l)) end
-  width = math.min(math.max(width, 30), vim.o.columns - 4)
-  local height = math.max(1, math.min(#lines, 15, vim.o.lines - 6))
+  local render = opts.render_item or function(item) return { { { format(item) } } } end
+  local ns = ensure_ns()
+  pick_ns = pick_ns or vim.api.nvim_create_namespace("reviewr_pick")
+
+  local function is_heading(item) return type(item) == "table" and item.heading ~= nil end
+  local function lines_of(item)
+    if is_heading(item) then return { { { item.heading, "ReviewrHeading" } } } end
+    return render(item)
+  end
+
+  local widest, line_count = vim.fn.strwidth(opts.prompt or "") + 4, 0
+  for _, item in ipairs(items) do
+    for _, segs in ipairs(lines_of(item)) do
+      line_count = line_count + 1
+      local w = 0
+      for _, seg in ipairs(segs) do w = w + vim.fn.strwidth(seg[1]) end
+      widest = math.max(widest, w + 2)
+    end
+  end
+
+  local function layout()
+    local cols, rows = vim.o.columns, vim.o.lines - vim.o.cmdheight
+    local height = math.max(1, math.min(line_count, vim.o.lines - 6))
+    local side = opts.preview ~= nil and cols >= PANEL_MIN_COLUMNS
+    local list_w = math.min(math.max(widest, 36), cols - 4)
+    local panel_w
+    if side then
+      local inner = math.min(cols - 4, 180) - 4
+      list_w = math.floor(inner * 0.45)
+      panel_w = inner - list_w
+      height = math.max(height, math.min(15, vim.o.lines - 6))
+    end
+    local group = list_w + 2 + (side and panel_w + 2 or 0)
+    local col = math.max(0, math.floor((cols - group) / 2))
+    local row = math.max(0, math.floor((rows - height - 2) / 2))
+    return {
+      backdrop = { relative = "editor", width = cols, height = rows, row = 0, col = 0 },
+      list = {
+        relative = "editor", width = list_w, height = height, row = row, col = col,
+        title = " " .. (opts.prompt or "") .. " ", title_pos = "center",
+        footer = " ↵ " .. (opts.action or "select") .. "  esc close" .. (side and "  ^d ^u scroll" or "") .. " ",
+        footer_pos = "center",
+      },
+      panel = side and { relative = "editor", width = panel_w, height = height, row = row, col = col + list_w + 2 } or nil,
+    }
+  end
+  local geo = layout()
+
+  local backdrop_buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[backdrop_buf].bufhidden = "wipe"
+  local backdrop = vim.api.nvim_open_win(backdrop_buf, false, vim.tbl_extend("force", geo.backdrop, {
+    focusable = false, style = "minimal", zindex = BACKDROP_Z,
+  }))
+  vim.wo[backdrop].winhl = "Normal:Normal"
+  vim.wo[backdrop].fillchars = "eob: "
+
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].modifiable = false
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    width = width,
-    height = height,
-    col = math.max(0, math.floor((vim.o.columns - width) / 2)),
-    row = math.max(0, math.floor((vim.o.lines - height - 2) / 2)),
-    style = "minimal",
-    border = "rounded",
-    title = opts.prompt and (" " .. opts.prompt .. " ") or nil,
-    title_pos = "center",
-  })
-  vim.wo[win].winhl = "Normal:Normal,FloatBorder:ReviewrPanelBorder,CursorLine:ReviewrButton"
-  vim.wo[win].cursorline = true
-  -- not the diff panes' number-only cursor line it would inherit
-  vim.wo[win].cursorlineopt = "line"
+  local win = vim.api.nvim_open_win(buf, true, vim.tbl_extend("force", geo.list, {
+    style = "minimal", border = "rounded", zindex = PICK_Z,
+  }))
+  vim.wo[win].winhl = "Normal:Normal,FloatBorder:ReviewrPickBorder,FloatTitle:ReviewrPickBorder,FloatFooter:ReviewrDim"
+  vim.wo[win].scrolloff = 0
+  -- the selection is drawn by paint_selection, not the inherited cursor line
+  vim.wo[win].cursorline = false
+
+  local panel_buf, panel_win, panel_content
+  local cache, shown, generation = {}, nil, 0
+  local entries, sel = {}, nil
+
+  local function paint_selection()
+    vim.api.nvim_buf_clear_namespace(buf, pick_ns, 0, -1)
+    local e = entries[sel]
+    if not e then return end
+    for line = e.first, e.last do
+      vim.api.nvim_buf_set_extmark(buf, pick_ns, line - 1, 0, { line_hl_group = "ReviewrPickSel", priority = 10 })
+      vim.api.nvim_buf_set_extmark(buf, pick_ns, line - 1, 0, {
+        virt_text = { { "▎", "ReviewrPickBar" } }, virt_text_pos = "overlay",
+      })
+    end
+  end
+
+  -- Rewrites the rows; the cursor stays on the selected item.
+  local function draw()
+    local width = geo.list.width
+    local rows, spans = {}, {}
+    entries = {}
+    for i, item in ipairs(items) do
+      local entry = { index = i, first = #rows + 1, heading = is_heading(item) }
+      local hit = cache[i]
+      local mark = hit and hit[2] and hit[2].mark
+      for n, segs in ipairs(lines_of(item)) do
+        local text, marks = compose(segs, width, n == 1 and mark or nil)
+        table.insert(rows, text)
+        for _, m in ipairs(marks) do table.insert(spans, { #rows - 1, m[1], m[2], m[3] }) end
+      end
+      entry.last = #rows
+      table.insert(entries, entry)
+    end
+    vim.bo[buf].modifiable = true
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, rows)
+    vim.bo[buf].modifiable = false
+    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+    for _, sp in ipairs(spans) do
+      vim.api.nvim_buf_set_extmark(buf, ns, sp[1], sp[2], { end_col = sp[3], hl_group = sp[4] })
+    end
+    paint_selection()
+  end
+
+  local function render_panel(lines, popts)
+    if not (panel_win and vim.api.nvim_win_is_valid(panel_win)) then return end
+    panel_content = { lines, popts }
+    popts = popts or {}
+    local rule = string.rep("─", math.max(1, geo.panel.width - 2))
+    local rules = {}
+    lines = vim.tbl_map(function(l) return l end, lines)
+    for i, l in ipairs(lines) do
+      if l == M.RULE then
+        lines[i] = rule
+        table.insert(rules, i - 1)
+      end
+    end
+    vim.bo[panel_buf].modifiable = true
+    vim.api.nvim_buf_set_lines(panel_buf, 0, -1, false, lines)
+    vim.bo[panel_buf].modifiable = false
+    if popts.markdown then pcall(vim.treesitter.start, panel_buf, "markdown") else pcall(vim.treesitter.stop, panel_buf) end
+    vim.api.nvim_buf_clear_namespace(panel_buf, ns, 0, -1)
+    for _, h in ipairs(popts.highlights or {}) do
+      vim.api.nvim_buf_set_extmark(panel_buf, ns, h[1], h[2], { end_col = h[3], hl_group = h[4], priority = 200 })
+    end
+    for _, line in ipairs(rules) do
+      vim.api.nvim_buf_set_extmark(panel_buf, ns, line, 0, { end_col = #rule, hl_group = "ReviewrRule", priority = 200 })
+    end
+    vim.api.nvim_win_call(panel_win, function() vim.fn.winrestview({ topline = 1, lnum = 1 }) end)
+  end
+
+  local function show_preview()
+    if not panel_win then return end
+    local index = entries[sel].index
+    if index == shown then return end
+    shown = index
+    local hit = cache[index]
+    if hit then return render_panel(hit[1], hit[2]) end
+    render_panel({ "Loading…" }, { highlights = { { 0, 0, #"Loading…", "ReviewrDim" } } })
+    generation = generation + 1
+    local mine = generation
+    vim.defer_fn(function()
+      if mine ~= generation or not panel_win then return end
+      opts.preview(items[index], function(lines, popts)
+        cache[index] = { lines, popts }
+        if shown == index then render_panel(lines, popts) end
+        if popts and popts.mark and vim.api.nvim_buf_is_valid(buf) then
+          local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+          draw()
+          vim.api.nvim_win_call(win, function() vim.fn.winrestview(view) end)
+        end
+      end)
+    end, 80)
+  end
+
+  local function step(from, dir)
+    local k = from + dir
+    while entries[k] and entries[k].heading do k = k + dir end
+    return entries[k] and k or nil
+  end
+
+  -- Selects entry k: cursor on its first line, the whole item (and a heading
+  -- right above it) in view.
+  local function focus(k)
+    sel = k
+    local e = entries[k]
+    local above = entries[k - 1]
+    local want_top = (above and above.heading) and above.first or e.first
+    vim.api.nvim_win_call(win, function()
+      local top = vim.fn.winsaveview().topline
+      local height = vim.api.nvim_win_get_height(win)
+      if e.last > top + height - 1 then top = e.last - height + 1 end
+      if want_top < top then top = want_top end
+      vim.fn.winrestview({ topline = top, lnum = e.first, col = 0 })
+    end)
+    paint_selection()
+    show_preview()
+  end
+
+  local function relayout()
+    geo = layout()
+    vim.api.nvim_win_set_config(backdrop, geo.backdrop)
+    vim.api.nvim_win_set_config(win, geo.list)
+    draw()
+    if sel then focus(sel) else focus(step(0, 1)) end
+    local want = geo.panel
+    if want and not panel_win then
+      panel_buf = vim.api.nvim_create_buf(false, true)
+      vim.bo[panel_buf].bufhidden = "wipe"
+      panel_win = vim.api.nvim_open_win(panel_buf, false, vim.tbl_extend("force", want, {
+        focusable = false, style = "minimal", border = "rounded", title = " Details ", title_pos = "center",
+        zindex = PICK_Z,
+      }))
+      vim.wo[panel_win].winhl = "Normal:Normal,FloatBorder:ReviewrPanelBorder,FloatTitle:ReviewrDim,FoldColumn:Normal"
+      vim.wo[panel_win].wrap = true
+      vim.wo[panel_win].linebreak = true
+      vim.wo[panel_win].foldcolumn = "1"
+      vim.wo[panel_win].conceallevel = 2
+      shown = nil
+      show_preview()
+    elseif want then
+      vim.api.nvim_win_set_config(panel_win, want)
+      if panel_content then render_panel(panel_content[1], panel_content[2]) end
+    elseif panel_win then
+      vim.api.nvim_win_close(panel_win, true)
+      panel_win, panel_buf, panel_content = nil, nil, nil
+    end
+  end
+
   local done = false
+  local group = vim.api.nvim_create_augroup("reviewr_pick_" .. buf, { clear = true })
   local function finish(choice)
     if done then return end
     done = true
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    vim.api.nvim_del_augroup_by_id(group)
+    for _, w in pairs({ win = win, panel = panel_win, backdrop = backdrop }) do
+      if vim.api.nvim_win_is_valid(w) then vim.api.nvim_win_close(w, true) end
+    end
     on_choice(choice)
   end
   local function map(keys, fn)
@@ -401,9 +685,54 @@ function M.pick(items, opts, on_choice)
       vim.keymap.set("n", key, fn, { buffer = buf, silent = true, nowait = true })
     end
   end
-  map({ "<CR>" }, function() finish(items[vim.fn.line(".")]) end)
+  local function move(dir)
+    local k = step(sel, dir)
+    if k then focus(k) end
+  end
+  map({ "j", "<Down>", "<C-n>" }, function() move(1) end)
+  map({ "k", "<Up>", "<C-p>" }, function() move(-1) end)
+  map({ "gg" }, function() focus(step(0, 1)) end)
+  map({ "G" }, function() focus(step(#entries + 1, -1)) end)
+  map({ "<CR>" }, function() finish(items[entries[sel].index]) end)
   map({ "<Esc>", "q" }, function() finish(nil) end)
-  vim.api.nvim_create_autocmd("WinLeave", { buffer = buf, once = true, callback = function() finish(nil) end })
+  if opts.preview then
+    for key, scroll in pairs({ ["<C-d>"] = "\4", ["<C-u>"] = "\21" }) do
+      map({ key }, function()
+        if panel_win then
+          vim.api.nvim_win_call(panel_win, function() vim.cmd.normal({ args = { scroll }, bang = true }) end)
+        end
+      end)
+    end
+  end
+
+  -- Anything else that takes focus (a notification, a message) hands it back;
+  -- only landing in an ordinary window cancels.
+  vim.api.nvim_create_autocmd("WinLeave", { group = group, buffer = buf, callback = function()
+    vim.schedule(function()
+      if done then return end
+      if not vim.api.nvim_win_is_valid(win) then return finish(nil) end
+      local cur = vim.api.nvim_get_current_win()
+      if cur == win or cur == panel_win or cur == backdrop then return end
+      if vim.api.nvim_win_get_config(cur).relative ~= "" then
+        vim.api.nvim_set_current_win(win)
+      else
+        finish(nil)
+      end
+    end)
+  end })
+  vim.api.nvim_create_autocmd("VimResized", { group = group, callback = relayout })
+  -- a click or any other motion lands on one item's first line
+  vim.api.nvim_create_autocmd("CursorMoved", { group = group, buffer = buf, callback = function()
+    local line = vim.api.nvim_win_get_cursor(win)[1]
+    for k, e in ipairs(entries) do
+      if line >= e.first and line <= e.last then
+        local target = e.heading and (step(k, 1) or step(k, -1)) or k
+        if target ~= sel or line ~= entries[target].first then focus(target) end
+        return
+      end
+    end
+  end })
+  relayout()
   return win
 end
 

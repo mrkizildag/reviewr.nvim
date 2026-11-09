@@ -13,6 +13,7 @@ M.defaults = {
   git = {
     timeout_ms = 20000,
   },
+  icons = true, -- Nerd Font icons in pickers and panels; false for plain unicode
   keymaps = true, -- false to skip, or a table of key overrides
   files_panel_height = 10, -- rows of the changed-files panel, under its title
   pr = {
