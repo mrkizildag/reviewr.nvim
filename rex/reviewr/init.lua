@@ -58,7 +58,8 @@ end
 -- The Neovim runs only for the review, so closing the review quits it and
 -- the pane closes with it.
 local function open_new(session_id, anchor, cwd, label, pre, nvim_command)
-  local command = { M.config.nvim, "-c", "lua vim.g.reviewr_standalone = true" }
+  -- --cmd, so the flag is set before the user's config runs and it can stay quiet
+  local command = { M.config.nvim, "--cmd", "lua vim.g.reviewr_standalone = true" }
   if pre then
     command[#command + 1] = "-c"
     command[#command + 1] = pre
