@@ -726,7 +726,7 @@ test("cmd+r in an agent's terminal opens a review paired with it, then hides and
   eq(block.label, "review:block:A")
   eq(block.options.cwd, "/repo")
   local command = table.concat(block.options.command, " ")
-  assert(command:find("vim.g.reviewr_standalone = true", 1, true), command)
+  assert(command:find("--cmd lua vim.g.reviewr_standalone = true", 1, true), command)
   assert(command:find('block = "block:A", name = "codex"', 1, true), command)
   calls = rex_toggle({ { block_id = "block:A" }, { block_id = "block:R", label = "review:block:A", placement = "placed" } },
     fg, "block:A")

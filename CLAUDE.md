@@ -46,7 +46,8 @@ them.
 - cmd+r toggles: in a review it hides it (`session.detach_block`, Neovim keeps
   running with its comments), in an agent's pane it shows/hides that agent's
   review, elsewhere one unpaired review per repo per window.
-- Neovims started by cmd+r carry `vim.g.reviewr_standalone`; closing the review
+- Neovims started by cmd+r carry `vim.g.reviewr_standalone`, set with `--cmd` so
+  the user's config can see it (e.g. to keep startup notices quiet); closing the review
   quits them so the pane closes.
 - The Rex module is loaded from Neovim's managed copy with a `pcall`-guarded
   `dofile` (same pattern as vim-rex-navigator). Never an unguarded `require` or
