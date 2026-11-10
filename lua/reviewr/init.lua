@@ -623,17 +623,6 @@ function M.pr_details_lines(d)
   return lines, marks, mark
 end
 
--- ui.pick's preview for PR rows; slug_of(pr): "owner/name" when not the repository at dir.
-local function pr_preview(dir, slug_of)
-  return function(pr, done)
-    require("reviewr.github").pr_details(pr.number, slug_of and slug_of(pr) or nil, dir, function(details, err)
-      if not details then return done({ "Could not load details: " .. tostring(err) }) end
-      local lines, marks, mark = M.pr_details_lines(details)
-      done(lines, { markdown = true, highlights = marks, mark = mark })
-    end)
-  end
-end
-
 -- Two-line row for a PR: state icon and title, then repo (when slug_of is
 -- given), #number, author and age, dimmed.
 local function pr_row(slug_of)
@@ -655,20 +644,117 @@ local function pr_row(slug_of)
   end
 end
 
+-- The details of pr, from the disk cache while its updatedAt still matches the
+-- list's, else from gh: cb(details) or cb(nil, err). slug: "owner/name" when
+-- the PR isn't in the repository at dir.
+local function load_details(pr, slug, dir, cb)
+  local cache = require("reviewr.cache")
+  local file = cache.details_path(pr.url)
+  local hit = cache.read(file)
+  if hit and hit.details and hit.updatedAt == pr.updatedAt then return cb(hit.details) end
+  require("reviewr.github").pr_details(pr.number, slug, dir, function(details, err)
+    if details then cache.write(file, { updatedAt = pr.updatedAt, details = details }) end
+    cb(details, err)
+  end)
+end
+
+local function details_preview(details)
+  local lines, marks, mark = M.pr_details_lines(details)
+  return lines, { markdown = true, highlights = marks, mark = mark }
+end
+
+local CHECKS_MARK = {
+  SUCCESS = { "✓", "ReviewrOk" }, FAILURE = { "✗", "ReviewrFail" }, ERROR = { "✗", "ReviewrFail" },
+  PENDING = { "●", "ReviewrPending" }, EXPECTED = { "●", "ReviewrPending" },
+}
+local PREFETCH_ITEMS, PREFETCH_PARALLEL = 8, 4
+
+-- Loads the details of the first few PRs of the list in the background, at
+-- most PREFETCH_PARALLEL gh processes at once, into the picker's previews.
+local function prefetch_details(handle, prs, slug_of, dir)
+  local queue = {}
+  for _, pr in ipairs(prs) do
+    if #queue < PREFETCH_ITEMS and not handle.has_preview(pr) then table.insert(queue, pr) end
+  end
+  local running = 0
+  local function pump()
+    while running < PREFETCH_PARALLEL and #queue > 0 and handle.is_open() do
+      local pr = table.remove(queue, 1)
+      running = running + 1
+      load_details(pr, slug_of and slug_of(pr) or nil, dir, function(details)
+        running = running - 1
+        if details and handle.is_open() then handle.set_preview(pr, details_preview(details)) end
+        pump()
+      end)
+    end
+  end
+  pump()
+end
+
+local function first_line(text) return vim.split(tostring(text), "\n")[1] end
+
+-- Opens the PR picker at once, from the cached list when there is one (a
+-- "loading" line when not), and updates it in place when spec.fetch lands.
+--   spec.cache_file  where the list is kept
+--   spec.fetch(cb)   cb(prs) or cb(nil, err)
+--   spec.rows(prs)   the picker's items for a list
+--   spec.slug_of     pr -> "owner/name" when PRs of several repositories are listed
+--   spec.dir         the repository the details are read from, when slug_of isn't given
+--   spec.empty       the line shown for an empty list
+--   spec.on_choice(pr)
+local function pr_picker(spec)
+  local ui = require("reviewr.ui")
+  local cache = require("reviewr.cache")
+  local function items_for(prs)
+    local rows = spec.rows(prs)
+    return #rows > 0 and rows or { { note = spec.empty } }
+  end
+  local function only_prs(rows) return vim.tbl_filter(function(r) return r.number ~= nil end, rows) end
+
+  local cached = cache.read(spec.cache_file)
+  local handle = ui.pick(cached and items_for(cached) or { { note = "Loading pull requests…" } }, {
+    prompt = ui.title("pr_open", "Pull requests"),
+    action = "review",
+    render_item = pr_row(spec.slug_of),
+    key = function(pr) return pr.url end,
+    stamp = function(pr) return pr.updatedAt or "" end,
+    mark = function(pr) return CHECKS_MARK[pr.checks] end,
+    preview = function(pr, done)
+      load_details(pr, spec.slug_of and spec.slug_of(pr) or nil, spec.dir, function(details, err)
+        if not details then return done({ "Could not load details: " .. tostring(err) }) end
+        done(details_preview(details))
+      end)
+    end,
+  }, function(choice)
+    if choice then spec.on_choice(choice) end
+  end)
+  handle.set_status("refreshing…", "ReviewrDim")
+  if cached then prefetch_details(handle, only_prs(spec.rows(cached)), spec.slug_of, spec.dir) end
+  spec.fetch(function(prs, err)
+    if not handle.is_open() then return end
+    if prs then
+      cache.write(spec.cache_file, prs)
+      handle.set_items(items_for(prs))
+      handle.set_status(nil)
+      return prefetch_details(handle, only_prs(spec.rows(prs)), spec.slug_of, spec.dir)
+    end
+    if cached then return handle.set_status("offline: " .. first_line(err), "ReviewrFail") end
+    handle.set_status(nil)
+    handle.set_items({ { note = "Could not load pull requests: " .. first_line(err), hl = "ReviewrFail" } })
+  end)
+end
+
 -- Picks one of the open pull requests of this repository and reviews it.
 function M.pick_pr()
   local repo = (state.get() or {}).repo or root()
-  local prs, err = require("reviewr.github").list_prs(repo)
-  if not prs then return notify_warn("could not list pull requests: " .. err) end
-  if #prs == 0 then return notify_warn("no open pull requests") end
-  require("reviewr.ui").pick(prs, {
-    prompt = require("reviewr.ui").title("pr_open", "Pull requests"),
-    action = "review",
-    render_item = pr_row(),
-    preview = pr_preview(repo),
-  }, function(choice)
-    if choice then M.set_scope("pr", { pr = choice.number, dir = repo }) end
-  end)
+  pr_picker({
+    cache_file = require("reviewr.cache").list_path(repo),
+    fetch = function(cb) require("reviewr.github").list_prs(repo, cb) end,
+    rows = function(prs) return prs end,
+    dir = repo,
+    empty = "No open pull requests",
+    on_choice = function(pr) M.set_scope("pr", { pr = pr.number, dir = repo }) end,
+  })
 end
 
 -- The first clone of slug under the configured roots, scanned two levels deep.
@@ -722,26 +808,24 @@ end
 -- one, picks among the open PRs I authored or was asked to review.
 function M.open_pr(arg)
   if not arg then
-    local prs, err = require("reviewr.github").search_prs()
-    if not prs then return notify_warn("could not search pull requests: " .. err) end
-    if #prs == 0 then return notify_warn("no open pull requests of yours") end
-    local function slug_of(pr) return pr.repository.nameWithOwner end
-    local rows = {}
-    for _, section in ipairs({ { "yours", "Yours" }, { "requested", "Review requested" } }) do
-      local group = vim.tbl_filter(function(pr) return pr.section == section[1] end, prs)
-      if #group > 0 then
-        table.insert(rows, { heading = section[2] })
-        vim.list_extend(rows, group)
-      end
-    end
-    require("reviewr.ui").pick(rows, {
-      prompt = require("reviewr.ui").title("pr_open", "Pull requests"),
-      action = "review",
-      render_item = pr_row(slug_of),
-      preview = pr_preview(nil, slug_of),
-    }, function(choice)
-      if choice then open_pr_in(choice.repository.nameWithOwner, choice.number) end
-    end)
+    pr_picker({
+      cache_file = require("reviewr.cache").list_path(nil),
+      fetch = require("reviewr.github").search_prs,
+      rows = function(prs)
+        local rows = {}
+        for _, section in ipairs({ { "yours", "Yours" }, { "requested", "Review requested" } }) do
+          local group = vim.tbl_filter(function(pr) return pr.section == section[1] end, prs)
+          if #group > 0 then
+            table.insert(rows, { heading = section[2] })
+            vim.list_extend(rows, group)
+          end
+        end
+        return rows
+      end,
+      slug_of = function(pr) return pr.repository.nameWithOwner end,
+      empty = "No open pull requests of yours",
+      on_choice = function(pr) open_pr_in(pr.repository.nameWithOwner, pr.number) end,
+    })
     return
   end
   local n = arg:match("^#?(%d+)$")

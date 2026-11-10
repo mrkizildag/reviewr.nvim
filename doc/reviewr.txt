@@ -81,7 +81,9 @@ pickers (gp, and :ReviewrPR without an argument) also show a Details panel
 beside the list (description, checks, review state) when Neovim is at least
 120 columns wide; <C-d> and <C-u> scroll it. Pull requests take two lines
 (title; repo, number, author, age) and :ReviewrPR without an argument groups
-them under "Yours" and "Review requested". Icons are Nerd Font glyphs; set
+them under "Yours" and "Review requested". The PR pickers open at once from the last list fetched and refresh in place;
+lists and PR details are cached under stdpath("cache")/reviewr (option
+cache_dir). Icons are Nerd Font glyphs; set
 icons = false in setup() for plain unicode.
 
 AGENTS                                                  *reviewr-agents*

@@ -505,6 +505,8 @@ test("the picker moves with j and arrows, picks with Enter, cancels with Esc", f
   eq(got, nil)
 end)
 
+local function pick_win(...) return ui.pick(...).win end
+
 -- the plain text of each line of a rendered row
 local function plain(lines)
   return vim.tbl_map(function(segs)
@@ -539,7 +541,7 @@ end)
 
 test("the picker is centered and cuts long rows with an ellipsis inside the box", function()
   local long = string.rep("wide行", 40)
-  local win = ui.pick({ long, "short" }, { prompt = "Pick" }, function() end)
+  local win = pick_win({ long, "short" }, { prompt = "Pick" }, function() end)
   local c = vim.api.nvim_win_get_config(win)
   eq(c.col, math.floor((vim.o.columns - (c.width + 2)) / 2))
   local row = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, 1, false)[1]
@@ -550,7 +552,7 @@ end)
 
 test("a notification float taking focus doesn't cancel the picker", function()
   local got = "unset"
-  local win = ui.pick({ "one", "two" }, { prompt = "Pick" }, function(c) got = c end)
+  local win = pick_win({ "one", "two" }, { prompt = "Pick" }, function(c) got = c end)
   local nbuf = vim.api.nvim_create_buf(false, true)
   local note = vim.api.nvim_open_win(nbuf, true, { relative = "editor", row = 0, col = 0, width = 10, height = 1 })
   vim.wait(100, function() return vim.api.nvim_get_current_win() == win end)
@@ -644,7 +646,7 @@ end)
 test("rows of two lines: j/k and the arrows move by item, Enter picks that item, the selection covers both lines", function()
   local items = { { n = 1 }, { n = 2 }, { n = 3 } }
   local got
-  local win = ui.pick(items, {
+  local win = pick_win(items, {
     prompt = "Pick",
     render_item = function(it) return { { { "title " .. it.n } }, { { "  meta", "ReviewrDim" } } } end,
   }, function(c) got = c end)
@@ -665,7 +667,7 @@ end)
 test("headings in a picker are shown but never selected", function()
   local a, b = { n = "a" }, { n = "b" }
   local got
-  local win = ui.pick({ { heading = "Yours" }, a, { heading = "Requested" }, b }, {
+  local win = pick_win({ { heading = "Yours" }, a, { heading = "Requested" }, b }, {
     prompt = "Pick", render_item = function(it) return { { { it.n } } } end,
   }, function(c) got = c end)
   eq(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, 3, false), { " Yours", " a", " Requested" })
@@ -681,7 +683,7 @@ end)
 test("a row gains a checks mark once its details are cached", function()
   local columns = vim.o.columns
   vim.o.columns = 140
-  local win = ui.pick({ "one" }, {
+  local win = pick_win({ "one" }, {
     prompt = "Pick",
     preview = function(_, done) done({ "x" }, { mark = { "✓", "ReviewrOk" } }) end,
   }, function() end)
@@ -1035,7 +1037,7 @@ test("the diff panes mark the cursor line by its number only, so no underline cr
   for _, w in ipairs({ d.left_win, d.right_win }) do eq(vim.wo[w].cursorlineopt, "number") end
   eq(vim.wo[ui.files_panel().win].cursorlineopt, "line", "the panel highlights its whole row")
   vim.api.nvim_set_current_win(d.right_win)
-  local picker = ui.pick({ "one", "two" }, { prompt = "Pick" }, function() end)
+  local picker = pick_win({ "one", "two" }, { prompt = "Pick" }, function() end)
   eq(vim.wo[picker].cursorline, false, "the picker draws its own selection")
   vim.api.nvim_win_close(picker, true)
   vim.o.cursorline = false
@@ -1183,40 +1185,185 @@ test("a fetch failure keeps the current view and reports git's error", function(
     vim.inspect(notes))
 end)
 
-test("gp lists the open PRs of the repository and opens the one picked", function()
+local pcache = require("reviewr.cache")
+local gh_run_async = github.run_async
+local function fresh_cache()
+  local dir = vim.fn.tempname()
+  require("reviewr.config").get().cache_dir = dir
+  return dir
+end
+-- handler(args, cb) answers the async gh calls, now or later
+local function gh_async(handler) github.run_async = function(args, _, cb) handler(args, cb) end end
+local function is_list(args) return args[2] == "list" end
+local function pr_item(n, title, extra)
+  return vim.tbl_extend("force", { number = n, title = title, author = { login = "mrk" }, isDraft = false,
+    updatedAt = "2020-01-01T00:00:00Z", url = "https://github.com/acme/widgets/pull/" .. n }, extra or {})
+end
+local function details_of(n)
+  return { number = n, title = "T" .. n, state = "OPEN", url = "https://github.com/acme/widgets/pull/" .. n,
+    author = { login = "mrk" }, body = "b", statusCheckRollup = {
+      { __typename = "CheckRun", name = "x", status = "COMPLETED", conclusion = "SUCCESS" } } }
+end
+local function picker_lines()
+  return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win()), 0, -1, false)
+end
+local function footer_text()
+  local footer = vim.api.nvim_win_get_config(vim.api.nvim_get_current_win()).footer
+  return table.concat(vim.tbl_map(function(chunk) return chunk[1] end, footer))
+end
+local function cursor_line() return picker_lines()[vim.api.nvim_win_get_cursor(0)[1]] end
+
+test("gp opens from the cached list at once, then updates in place keeping the selection by url", function()
+  fresh_cache()
   assert(vim.fn.maparg("gp", "n", false, true).buffer == 1, "gp not bound in the diff")
-  local select, shown = ui.pick, nil
-  ui.pick = function(items, opts, cb)
-    shown = vim.tbl_map(function(pr) return plain(opts.render_item(pr)) end, items)
-    cb(items[2])
-  end
-  local list = { { number = 3, title = "Other", author = { login = "ann" }, isDraft = false, updatedAt = "2020-01-01T00:00:00Z" },
-    { number = 7, title = "Add b", author = { login = "mrk" }, isDraft = true } }
-  gh_stub(function(args) if args[2] == "list" then return list end return view(7) end)
+  local repo = require("reviewr.state").get().repo
+  pcache.write(pcache.list_path(repo), { pr_item(3, "Other"), pr_item(7, "Add b", { isDraft = true }) })
+  local fetched
+  gh_async(function(args, cb) if is_list(args) then fetched = cb end end)
+  gh_stub(function() return view(7) end)
   reviewr.pick_pr()
-  ui.pick = select
-  eq({ shown[1][1], shown[1][2]:match("^(.-) · %d+y ago$"), shown[2] }, {
-    ui.icon("pr_open") .. " Other", "  #3 · ann", { ui.icon("pr_draft") .. " Add b", "  #7 · mrk" },
-  })
+  assert(fetched, "the fetch started")
+  eq(#picker_lines(), 4, "the cached rows are already shown")
+  assert(footer_text():find("refreshing…", 1, true), "footer says it is refreshing")
+  press_keys("j")
+  assert(cursor_line():find("Add b", 1, true))
+  fetched({ pr_item(9, "New"), pr_item(3, "Other"), pr_item(7, "Add b", { isDraft = true }) })
+  eq(#picker_lines(), 6)
+  assert(cursor_line():find("Add b", 1, true), "the selection stays on the same PR")
+  assert(not footer_text():find("refreshing", 1, true), "footer is clear again")
+  eq(pcache.read(pcache.list_path(repo))[1].number, 9, "the new list is cached")
+  press_keys("<CR>")
   eq(require("reviewr.scope").get().label, "PR #7: Add b")
   leave_pr_review()
 end)
 
-test(":ReviewrPR without an argument lists Yours and Review requested, a PR in both under Yours", function()
-  local function found(n, repo)
-    return { number = n, title = "T" .. n, author = { login = "x" }, isDraft = false, url = "https://github.com/" .. repo .. "/pull/" .. n,
-      repository = { nameWithOwner = repo }, updatedAt = "2020-01-01T00:00:00Z" }
+test("with no cached list the picker shows a loading line, then the items", function()
+  fresh_cache()
+  local fetched
+  gh_async(function(args, cb) if is_list(args) then fetched = cb end end)
+  reviewr.pick_pr()
+  assert(picker_lines()[1]:find("Loading pull requests…", 1, true))
+  press_keys("<CR>")
+  assert(vim.api.nvim_win_get_config(0).relative ~= "", "Enter on the loading line does nothing")
+  fetched({ pr_item(3, "Other") })
+  assert(picker_lines()[1]:find("Other", 1, true))
+  press_keys("<Esc>")
+end)
+
+test("a failed fetch keeps the cached list and says offline; with no cache it shows the error", function()
+  fresh_cache()
+  local git = require("reviewr.git")
+  local repo = (require("reviewr.state").get() or {}).repo or git.git_root(vim.fn.getcwd()) or vim.fn.getcwd()
+  pcache.write(pcache.list_path(repo), { pr_item(3, "Other") })
+  local fetched
+  gh_async(function(_, cb) fetched = cb end)
+  reviewr.pick_pr()
+  fetched(nil, "no route to host\nmore")
+  assert(picker_lines()[1]:find("Other", 1, true), "cached rows kept")
+  assert(footer_text():find("offline: no route to host", 1, true))
+  assert(not footer_text():find("more", 1, true), "only the first line")
+  press_keys("<Esc>")
+  fresh_cache()
+  reviewr.pick_pr()
+  fetched(nil, "boom")
+  assert(picker_lines()[1]:find("Could not load pull requests: boom", 1, true))
+  local win = vim.api.nvim_get_current_win()
+  press_keys("<Esc>")
+  assert(not vim.api.nvim_win_is_valid(win), "Esc closes")
+end)
+
+test(":ReviewrPR without an argument opens the cached list with check marks from the rollup state", function()
+  fresh_cache()
+  local function found(n, repo, extra)
+    return vim.tbl_extend("force", pr_item(n, "T" .. n, { repository = { nameWithOwner = repo } }), extra)
   end
-  gh_stub(function(args)
-    if vim.tbl_contains(args, "--author=@me") then return { found(1, "acme/widgets"), found(2, "acme/other") } end
-    return { found(2, "acme/other"), found(3, "acme/lib") }
-  end)
-  local select, rows = ui.pick, nil
-  ui.pick = function(items, opts) rows = { items = items, render = opts.render_item } end
+  pcache.write(pcache.list_path(nil), {
+    found(1, "acme/widgets", { section = "yours", checks = "SUCCESS" }),
+    found(2, "acme/other", { section = "yours", checks = "FAILURE" }),
+    found(3, "acme/lib", { section = "requested", checks = "PENDING" }),
+    found(4, "acme/lib", { section = "requested" }),
+  })
+  gh_async(function() end)
   reviewr.open_pr()
-  ui.pick = select
-  eq(vim.tbl_map(function(it) return it.heading or it.number end, rows.items), { "Yours", 1, 2, "Review requested", 3 })
-  eq(plain(rows.render(rows.items[2]))[2]:match("^  acme/widgets · #1"), "  acme/widgets · #1")
+  local lines = picker_lines()
+  eq(#lines, 2 + 4 * 2)
+  eq(lines[1], " Yours")
+  local function marked(line, mark) return line:sub(-#mark) == mark end
+  assert(marked(lines[2], "✓") and marked(lines[4], "✗") and marked(lines[7], "●"), "marks")
+  assert(not marked(lines[9], "✓") and not marked(lines[9], "✗") and not marked(lines[9], "●"), "no checks, no mark")
+  eq(lines[6], " Review requested")
+  press_keys("<Esc>")
+end)
+
+test("the list arrives as one GraphQL search and maps to sections, a PR in both under Yours", function()
+  local function node(n, repo, rollup)
+    return { number = n, title = "T" .. n, url = "https://github.com/" .. repo .. "/pull/" .. n, isDraft = false,
+      updatedAt = "2020-01-0" .. n .. "T00:00:00Z", reviewDecision = vim.NIL, author = { login = "a" },
+      repository = { nameWithOwner = repo },
+      commits = { nodes = { { commit = { statusCheckRollup = rollup or vim.NIL } } } } }
+  end
+  local sent
+  gh_async(function(args, cb)
+    sent = args
+    cb({ data = {
+      mine = { nodes = { node(1, "acme/a", { state = "SUCCESS" }), node(2, "acme/b") } },
+      review = { nodes = { node(2, "acme/b"), node(3, "acme/c", { state = "FAILURE" }) } },
+    } })
+  end)
+  local got
+  github.search_prs(function(rows) got = rows end)
+  eq(sent[1], "api")
+  eq(sent[2], "graphql")
+  assert(table.concat(sent, " "):find("author:@me", 1, true) and table.concat(sent, " "):find("review-requested:@me", 1, true))
+  eq(vim.tbl_map(function(r) return { r.number, r.section, r.checks } end, got),
+    { { 3, "requested", "FAILURE" }, { 2, "yours", nil }, { 1, "yours", "SUCCESS" } })
+end)
+
+test("the first eight details load in the background, four gh processes at a time", function()
+  fresh_cache()
+  local list = {}
+  for n = 1, 10 do table.insert(list, pr_item(n, "T" .. n)) end
+  pcache.write(pcache.list_path(nil), vim.tbl_map(function(pr)
+    return vim.tbl_extend("force", pr, { repository = { nameWithOwner = "acme/widgets" }, section = "yours" })
+  end, list))
+  local held, started, max_running, running = {}, 0, 0, 0
+  gh_async(function(args, cb)
+    if args[1] ~= "pr" then return end
+    started, running = started + 1, running + 1
+    max_running = math.max(max_running, running)
+    table.insert(held, function() running = running - 1; cb(details_of(tonumber(args[3]))) end)
+  end)
+  reviewr.open_pr()
+  eq({ started, running }, { 4, 4 })
+  while #held > 0 do table.remove(held, 1)() end
+  eq(started, 8)
+  eq(max_running, 4)
+  local lines = picker_lines()
+  assert(lines[2]:sub(-3) == "✓", "a loaded PR shows its checks mark")
+  assert(lines[17]:sub(-3) ~= "✓", "the ninth is not loaded")
+  press_keys("<Esc>")
+end)
+
+test("details from disk are reused only while the PR's updatedAt matches", function()
+  fresh_cache()
+  local same, changed = pr_item(1, "Same"), pr_item(2, "Changed")
+  pcache.write(pcache.list_path(nil), {
+    vim.tbl_extend("force", same, { repository = { nameWithOwner = "acme/widgets" }, section = "yours" }),
+    vim.tbl_extend("force", changed, { repository = { nameWithOwner = "acme/widgets" }, section = "yours" }),
+  })
+  pcache.write(pcache.details_path(same.url), { updatedAt = same.updatedAt, details = details_of(1) })
+  pcache.write(pcache.details_path(changed.url), { updatedAt = "2019-01-01T00:00:00Z", details = details_of(2) })
+  local asked = {}
+  gh_async(function(args, cb)
+    if args[1] == "pr" then
+      table.insert(asked, tonumber(args[3]))
+      cb(details_of(2))
+    end
+  end)
+  reviewr.open_pr()
+  eq(asked, { 2 })
+  eq(pcache.read(pcache.details_path(changed.url)).updatedAt, changed.updatedAt, "refetched details are stored")
+  press_keys("<Esc>")
 end)
 
 test("a PR whose head branch is checked out in a worktree opens that worktree's branch view", function()
@@ -1274,6 +1421,7 @@ test("in a bare clone, working-tree views say so and PR and commit views work", 
   eq(notes, { "reviewr: no working tree in this clone; only PR and commit views work" })
   leave_pr_review()
   github.run = gh_run
+  github.run_async = gh_run_async
 end)
 
 test("close drops comments and the review tab, even as the only tab", function()
