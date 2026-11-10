@@ -441,17 +441,20 @@ end
 
 -- A list in a centered box over a blank backdrop, taking vim.ui.select's
 -- arguments: j/k or the arrows move, <CR> picks, <Esc> or q cancels
--- (on_choice(nil)).
+-- (on_choice(nil)). Returns a handle: { win, is_open(), set_items(items),
+-- set_status(text, hl), set_preview(item, lines, popts), has_preview(item) }.
 --   opts.prompt       box title
 --   opts.format_item  one plain line per item, or
 --   opts.render_item  item -> lines, each a list of { text, hl? } segments
 --   opts.action       the <CR> hint in the footer (default "select")
+--   opts.key          item -> string identifying it across set_items
+--   opts.stamp        item -> string; a cached preview is dropped when it changes
+--   opts.mark         item -> { text, hl } shown at the right of its first line
 --   opts.preview      (item, done) fills a Details panel beside the list when
 --                     the editor is wide enough; done(lines, { markdown?,
---                     highlights?, mark? }), mark being the { text, hl }
---                     shown at the right of the item's first line.
--- An item that is a table with a `heading` string is a heading row: shown,
--- never selected.
+--                     highlights?, mark? }); a mark given there replaces opts.mark.
+-- An item that is a table with a `heading` or `note` string (and an optional
+-- `hl`) is a static row: shown, never selected.
 function M.pick(items, opts, on_choice)
   opts = opts or {}
   local format = opts.format_item or tostring
@@ -459,20 +462,37 @@ function M.pick(items, opts, on_choice)
   local ns = ensure_ns()
   pick_ns = pick_ns or vim.api.nvim_create_namespace("reviewr_pick")
 
-  local function is_heading(item) return type(item) == "table" and item.heading ~= nil end
+  local function is_static(item) return type(item) == "table" and (item.heading or item.note) ~= nil end
   local function lines_of(item)
-    if is_heading(item) then return { { { item.heading, "ReviewrHeading" } } } end
+    if is_static(item) then
+      return { { { item.heading or item.note, item.hl or (item.heading and "ReviewrHeading" or "ReviewrDim") } } }
+    end
     return render(item)
   end
+  local function cache_key(item)
+    if not opts.key then return item end
+    return opts.key(item) .. "\0" .. (opts.stamp and opts.stamp(item) or "")
+  end
 
-  local widest, line_count = vim.fn.strwidth(opts.prompt or "") + 4, 0
-  for _, item in ipairs(items) do
-    for _, segs in ipairs(lines_of(item)) do
-      line_count = line_count + 1
-      local w = 0
-      for _, seg in ipairs(segs) do w = w + vim.fn.strwidth(seg[1]) end
-      widest = math.max(widest, w + 2)
+  local widest, line_count
+  local function measure()
+    widest, line_count = vim.fn.strwidth(opts.prompt or "") + 4, 0
+    for _, item in ipairs(items) do
+      for _, segs in ipairs(lines_of(item)) do
+        line_count = line_count + 1
+        local w = 0
+        for _, seg in ipairs(segs) do w = w + vim.fn.strwidth(seg[1]) end
+        widest = math.max(widest, w + 2)
+      end
     end
+  end
+  measure()
+
+  local status
+  local function footer(side)
+    local chunks = { { " ↵ " .. (opts.action or "select") .. "  esc close" .. (side and "  ^d ^u scroll" or "") .. " ", "ReviewrDim" } }
+    if status then table.insert(chunks, { status[1] .. " ", status[2] }) end
+    return chunks
   end
 
   local function layout()
@@ -495,8 +515,7 @@ function M.pick(items, opts, on_choice)
       list = {
         relative = "editor", width = list_w, height = height, row = row, col = col,
         title = " " .. (opts.prompt or "") .. " ", title_pos = "center",
-        footer = " ↵ " .. (opts.action or "select") .. "  esc close" .. (side and "  ^d ^u scroll" or "") .. " ",
-        footer_pos = "center",
+        footer = footer(side), footer_pos = "center",
       },
       panel = side and { relative = "editor", width = panel_w, height = height, row = row, col = col + list_w + 2 } or nil,
     }
@@ -523,11 +542,11 @@ function M.pick(items, opts, on_choice)
 
   local panel_buf, panel_win, panel_content
   local cache, shown, generation = {}, nil, 0
-  local entries, sel = {}, nil
+  local entries, sel = {}, nil -- sel: index of the selected item, nil when there is none
 
   local function paint_selection()
     vim.api.nvim_buf_clear_namespace(buf, pick_ns, 0, -1)
-    local e = entries[sel]
+    local e = sel and entries[sel]
     if not e then return end
     for line = e.first, e.last do
       vim.api.nvim_buf_set_extmark(buf, pick_ns, line - 1, 0, { line_hl_group = "ReviewrPickSel", priority = 10 })
@@ -537,22 +556,25 @@ function M.pick(items, opts, on_choice)
     end
   end
 
-  -- Rewrites the rows; the cursor stays on the selected item.
+  -- Rewrites the rows.
   local function draw()
     local width = geo.list.width
     local rows, spans = {}, {}
     entries = {}
     for i, item in ipairs(items) do
-      local entry = { index = i, first = #rows + 1, heading = is_heading(item) }
-      local hit = cache[i]
-      local mark = hit and hit[2] and hit[2].mark
+      local entry = { first = #rows + 1, static = is_static(item) }
+      local mark
+      if not entry.static then
+        local hit = cache[cache_key(item)]
+        mark = (hit and hit[2] and hit[2].mark) or (opts.mark and opts.mark(item))
+      end
       for n, segs in ipairs(lines_of(item)) do
         local text, marks = compose(segs, width, n == 1 and mark or nil)
         table.insert(rows, text)
         for _, m in ipairs(marks) do table.insert(spans, { #rows - 1, m[1], m[2], m[3] }) end
       end
       entry.last = #rows
-      table.insert(entries, entry)
+      entries[i] = entry
     end
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, rows)
@@ -564,13 +586,20 @@ function M.pick(items, opts, on_choice)
     paint_selection()
   end
 
+  -- draw() with the view where it was
+  local function redraw()
+    local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+    draw()
+    vim.api.nvim_win_call(win, function() vim.fn.winrestview(view) end)
+  end
+
   local function render_panel(lines, popts)
     if not (panel_win and vim.api.nvim_win_is_valid(panel_win)) then return end
     panel_content = { lines, popts }
     popts = popts or {}
     local rule = string.rep("─", math.max(1, geo.panel.width - 2))
     local rules = {}
-    lines = vim.tbl_map(function(l) return l end, lines)
+    lines = vim.list_slice(lines)
     for i, l in ipairs(lines) do
       if l == M.RULE then
         lines[i] = rule
@@ -593,41 +622,42 @@ function M.pick(items, opts, on_choice)
 
   local function show_preview()
     if not panel_win then return end
-    local index = entries[sel].index
-    if index == shown then return end
-    shown = index
-    local hit = cache[index]
+    if not sel then
+      shown = nil
+      return render_panel({ "" })
+    end
+    local item = items[sel]
+    local ck = cache_key(item)
+    if ck == shown then return end
+    shown = ck
+    local hit = cache[ck]
     if hit then return render_panel(hit[1], hit[2]) end
     render_panel({ "Loading…" }, { highlights = { { 0, 0, #"Loading…", "ReviewrDim" } } })
     generation = generation + 1
     local mine = generation
     vim.defer_fn(function()
       if mine ~= generation or not panel_win then return end
-      opts.preview(items[index], function(lines, popts)
-        cache[index] = { lines, popts }
-        if shown == index then render_panel(lines, popts) end
-        if popts and popts.mark and vim.api.nvim_buf_is_valid(buf) then
-          local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
-          draw()
-          vim.api.nvim_win_call(win, function() vim.fn.winrestview(view) end)
-        end
+      opts.preview(item, function(lines, popts)
+        cache[ck] = { lines, popts }
+        if shown == ck then render_panel(lines, popts) end
+        if popts and popts.mark and vim.api.nvim_buf_is_valid(buf) then redraw() end
       end)
     end, 80)
   end
 
   local function step(from, dir)
     local k = from + dir
-    while entries[k] and entries[k].heading do k = k + dir end
+    while entries[k] and entries[k].static do k = k + dir end
     return entries[k] and k or nil
   end
 
-  -- Selects entry k: cursor on its first line, the whole item (and a heading
+  -- Selects item k: cursor on its first line, the whole item (and a heading
   -- right above it) in view.
   local function focus(k)
     sel = k
     local e = entries[k]
     local above = entries[k - 1]
-    local want_top = (above and above.heading) and above.first or e.first
+    local want_top = (above and above.static) and above.first or e.first
     vim.api.nvim_win_call(win, function()
       local top = vim.fn.winsaveview().topline
       local height = vim.api.nvim_win_get_height(win)
@@ -639,17 +669,34 @@ function M.pick(items, opts, on_choice)
     show_preview()
   end
 
-  local function relayout()
+  -- Keeps the selection where it is; `want` ({ key, index }) says which item
+  -- to keep after the items changed.
+  local function reselect(want)
+    local k
+    if want and want.key and opts.key then
+      for i, item in ipairs(items) do
+        if not is_static(item) and opts.key(item) == want.key then k = i end
+      end
+    end
+    if not k and want and want.index then
+      local at = math.min(want.index, #items)
+      k = (entries[at] and not entries[at].static) and at or (step(at, 1) or step(at, -1))
+    end
+    k = k or step(0, 1)
+    if k then focus(k) else sel = nil; paint_selection(); show_preview() end
+  end
+
+  local function relayout(want)
     geo = layout()
     vim.api.nvim_win_set_config(backdrop, geo.backdrop)
     vim.api.nvim_win_set_config(win, geo.list)
     draw()
-    if sel then focus(sel) else focus(step(0, 1)) end
-    local want = geo.panel
-    if want and not panel_win then
+    reselect(want or (sel and { index = sel }))
+    local panel = geo.panel
+    if panel and not panel_win then
       panel_buf = vim.api.nvim_create_buf(false, true)
       vim.bo[panel_buf].bufhidden = "wipe"
-      panel_win = vim.api.nvim_open_win(panel_buf, false, vim.tbl_extend("force", want, {
+      panel_win = vim.api.nvim_open_win(panel_buf, false, vim.tbl_extend("force", panel, {
         focusable = false, style = "minimal", border = "rounded", title = " Details ", title_pos = "center",
         zindex = PICK_Z,
       }))
@@ -660,8 +707,8 @@ function M.pick(items, opts, on_choice)
       vim.wo[panel_win].conceallevel = 2
       shown = nil
       show_preview()
-    elseif want then
-      vim.api.nvim_win_set_config(panel_win, want)
+    elseif panel then
+      vim.api.nvim_win_set_config(panel_win, panel)
       if panel_content then render_panel(panel_content[1], panel_content[2]) end
     elseif panel_win then
       vim.api.nvim_win_close(panel_win, true)
@@ -686,14 +733,14 @@ function M.pick(items, opts, on_choice)
     end
   end
   local function move(dir)
-    local k = step(sel, dir)
+    local k = sel and step(sel, dir)
     if k then focus(k) end
   end
   map({ "j", "<Down>", "<C-n>" }, function() move(1) end)
   map({ "k", "<Up>", "<C-p>" }, function() move(-1) end)
-  map({ "gg" }, function() focus(step(0, 1)) end)
-  map({ "G" }, function() focus(step(#entries + 1, -1)) end)
-  map({ "<CR>" }, function() finish(items[entries[sel].index]) end)
+  map({ "gg" }, function() local k = step(0, 1); if k then focus(k) end end)
+  map({ "G" }, function() local k = step(#entries + 1, -1); if k then focus(k) end end)
+  map({ "<CR>" }, function() if sel then finish(items[sel]) end end)
   map({ "<Esc>", "q" }, function() finish(nil) end)
   if opts.preview then
     for key, scroll in pairs({ ["<C-d>"] = "\4", ["<C-u>"] = "\21" }) do
@@ -720,20 +767,45 @@ function M.pick(items, opts, on_choice)
       end
     end)
   end })
-  vim.api.nvim_create_autocmd("VimResized", { group = group, callback = relayout })
+  vim.api.nvim_create_autocmd("VimResized", { group = group, callback = function() relayout() end })
   -- a click or any other motion lands on one item's first line
   vim.api.nvim_create_autocmd("CursorMoved", { group = group, buffer = buf, callback = function()
     local line = vim.api.nvim_win_get_cursor(win)[1]
     for k, e in ipairs(entries) do
       if line >= e.first and line <= e.last then
-        local target = e.heading and (step(k, 1) or step(k, -1)) or k
-        if target ~= sel or line ~= entries[target].first then focus(target) end
+        local target = e.static and (step(k, 1) or step(k, -1)) or k
+        if target and (target ~= sel or line ~= entries[target].first) then focus(target) end
         return
       end
     end
   end })
   relayout()
-  return win
+
+  local handle = { win = win }
+  function handle.is_open() return not done end
+  function handle.set_items(new)
+    if done then return end
+    local current = sel and items[sel]
+    local want = { index = sel, key = current and opts.key and opts.key(current) or nil }
+    items = new
+    measure()
+    shown, sel = nil, nil
+    relayout(want)
+  end
+  function handle.set_status(text, hl)
+    if done then return end
+    status = text and { text, hl or "ReviewrDim" } or nil
+    vim.api.nvim_win_set_config(win, { footer = footer(panel_win ~= nil), footer_pos = "center" })
+  end
+  function handle.has_preview(item) return cache[cache_key(item)] ~= nil end
+  function handle.set_preview(item, lines, popts)
+    if done then return end
+    local ck = cache_key(item)
+    cache[ck] = { lines, popts }
+    if shown == ck then render_panel(lines, popts) end
+    if popts and popts.mark then redraw() end
+  end
+  return handle
 end
 
 -- ---------- help ----------

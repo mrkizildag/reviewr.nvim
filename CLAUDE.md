@@ -66,7 +66,7 @@ them.
 - Prompts and pickers are small boxes (`ui.confirm`, `ui.pick`): selection
   highlighted, j/k or arrows, Enter, Esc. Never `vim.ui.select`, `vim.ui.input`
   or numbered lists. Close asks once, Yes preselected. Pickers are centered over
-  a blank backdrop; the PR pickers show two-line rows and add a Details side panel at 120+ columns. `icons = false` swaps Nerd Font glyphs for plain unicode.
+  a blank backdrop; the PR pickers show two-line rows and add a Details side panel at 120+ columns. The PR pickers never block on `gh`: they open from the disk cache (`cache.lua`) and refresh in place. `icons = false` swaps Nerd Font glyphs for plain unicode.
 - Keys follow herdr-reviewr unless they would take a Vim motion: `u` `b` `t`
   switch views; pickers are `gc` (commit) and `gb` (base), not `g`/`G`.
 - The hint lives in the change pane's winbar (lualine owns statuslines). The two
