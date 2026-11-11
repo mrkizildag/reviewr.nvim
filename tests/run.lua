@@ -564,6 +564,43 @@ test("a notification float taking focus doesn't cancel the picker", function()
   vim.api.nvim_win_close(note, true)
 end)
 
+test("a window motion such as a <C-h> mapping doesn't cancel the picker", function()
+  local got = "unset"
+  local ordinary = vim.api.nvim_get_current_win()
+  local win = pick_win({ "one", "two" }, { prompt = "Pick" }, function(c) got = c end)
+  vim.keymap.set("n", "<C-h>", "<C-w>p")
+  press_keys("<C-h><C-l>")
+  vim.keymap.del("n", "<C-h>")
+  eq(vim.api.nvim_get_current_win(), win, "<C-h> is a no-op in the picker")
+  vim.api.nvim_set_current_win(ordinary)
+  vim.wait(100, function() return vim.api.nvim_get_current_win() == win end)
+  eq(got, "unset")
+  eq(vim.api.nvim_get_current_win(), win, "focus handed back")
+  press_keys("<Esc>")
+  eq(got, nil)
+end)
+
+test("/ filters the picker by words under their headings; Enter picks a match, Esc clears then cancels", function()
+  local function list_lines(win) return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, -1, false) end
+  local items = { { heading = "Yours" }, "alpha one", "beta two", { heading = "Others" }, "alpha three" }
+  local got = "unset"
+  local win = pick_win(items, { prompt = "Pick" }, function(c) got = c end)
+  press_keys("/thr alp<CR>")
+  eq(got, "alpha three")
+
+  got = "unset"
+  win = pick_win(items, { prompt = "Pick" }, function(c) got = c end)
+  press_keys("/thr<Esc>")
+  vim.wait(200, function() return #list_lines(win) == 2 end)
+  eq(vim.tbl_map(vim.trim, list_lines(win)), { "Others", "alpha three" })
+  eq(vim.api.nvim_get_current_win(), win, "Esc in the box goes back to the list")
+  press_keys("<Esc>")
+  eq(got, "unset")
+  eq(#list_lines(win), 5, "the first Esc clears the filter")
+  press_keys("<Esc>")
+  eq(got, nil)
+end)
+
 test("a wide editor shows the item's details beside the list, never a stale result", function()
   local columns = vim.o.columns
   vim.o.columns = 140
