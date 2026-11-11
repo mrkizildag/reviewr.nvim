@@ -1,9 +1,9 @@
--- reviewr.cache: JSON files under the cache directory, for what the pickers show first
-local config = require("reviewr.config")
+-- heimdall.cache: JSON files under the cache directory, for what the pickers show first
+local config = require("heimdall.config")
 
 local M = {}
 
-local function dir() return config.get().cache_dir or (vim.fn.stdpath("cache") .. "/reviewr") end
+local function dir() return config.get().cache_dir or (vim.fn.stdpath("cache") .. "/heimdall") end
 
 -- root: a repository root for gp's list; nil for the cross-repository one.
 function M.list_path(root)

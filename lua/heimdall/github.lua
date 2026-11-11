@@ -1,4 +1,4 @@
--- reviewr.github: the one place that talks to the gh CLI
+-- heimdall.github: the one place that talks to the gh CLI
 local M = {}
 
 local PR_FIELDS = "number,title,headRefName,baseRefName,author,updatedAt,isDraft,url"

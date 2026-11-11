@@ -1,4 +1,4 @@
--- Rex integration for reviewr.nvim: a key that shows a review beside the
+-- Rex integration for heimdall.nvim: a key that shows a review beside the
 -- focused terminal and hides it again. Pressed in an agent's terminal, the
 -- review is paired with that agent: it tracks that agent's turns and sends
 -- to it.
@@ -13,7 +13,7 @@ M.config = {
   -- run in the new Neovim; the branch scope diffs the working tree, commits
   -- and uncommitted edits alike, against its merge base with the default
   -- branch (origin/HEAD, else main or master)
-  command = "ReviewrScope branch",
+  command = "HeimdallScope branch",
   nvim = "nvim",
   -- the share of the row the focused terminal keeps
   ratio = 0.4,
@@ -59,7 +59,7 @@ end
 -- the pane closes with it.
 local function open_new(session_id, anchor, cwd, label, pre, nvim_command)
   -- --cmd, so the flag is set before the user's config runs and it can stay quiet
-  local command = { M.config.nvim, "--cmd", "lua vim.g.reviewr_standalone = true" }
+  local command = { M.config.nvim, "--cmd", "lua vim.g.heimdall_standalone = true" }
   if pre then
     command[#command + 1] = "-c"
     command[#command + 1] = pre
@@ -126,7 +126,7 @@ function M.toggle(ctx)
         return show(session_id, b, block_id)
       end
     end
-    local pairing = string.format("lua vim.g.reviewr_agent = { session = %q, block = %q, name = %q }",
+    local pairing = string.format("lua vim.g.heimdall_agent = { session = %q, block = %q, name = %q }",
       session_id, block_id, agent)
     return open_new(session_id, block_id, cwd, label, pairing)
   end
@@ -168,20 +168,20 @@ function M.open_pr(ctx)
   end
   local cwd = fg.cwd or ""
   if cwd == "" then cwd = os.getenv("HOME") end
-  local pairing = agent and string.format("lua vim.g.reviewr_agent = { session = %q, block = %q, name = %q }",
+  local pairing = agent and string.format("lua vim.g.heimdall_agent = { session = %q, block = %q, name = %q }",
     session_id, block_id, agent)
-  return open_new(session_id, block_id, cwd, label, pairing, "ReviewrPR")
+  return open_new(session_id, block_id, cwd, label, pairing, "HeimdallPR")
 end
 
 function M.setup(opts)
   for k, v in pairs(opts or {}) do M.config[k] = v end
   rex.action({
-    name = "reviewr_open",
+    name = "heimdall_open",
     title = "Show or hide the review",
     run = function(ctx) return M.toggle(ctx or {}) end,
   })
   rex.action({
-    name = "reviewr_pr",
+    name = "heimdall_pr",
     title = "Review a pull request",
     run = function(ctx) return M.open_pr(ctx or {}) end,
   })

@@ -2,22 +2,22 @@
 # Shows or hides the review beside a pane. Pressed in a review, hides it.
 # Pressed elsewhere: hides the review in this window, else brings back the
 # hidden review of the pane's repository, else opens one. Hidden reviews keep
-# running, comments and all, in the background session "reviewr".
+# running, comments and all, in the background session "heimdall".
 pane=$1
-hidden=reviewr
+hidden=heimdall
 
-command=$(tmux show -gqv @reviewr-command)
-command=${command:-"nvim -c 'lua vim.g.reviewr_standalone = true' -c 'ReviewrScope branch'"}
-size=$(tmux show -gqv @reviewr-size)
+command=$(tmux show -gqv @heimdall-command)
+command=${command:-"nvim -c 'lua vim.g.heimdall_standalone = true' -c 'HeimdallScope branch'"}
+size=$(tmux show -gqv @heimdall-size)
 size=${size:-60%}
 
 path=$(tmux display -p -t "$pane" '#{pane_current_path}')
 repo=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$path")
 window=$(tmux display -p -t "$pane" '#{window_id}')
 
-# reviews are panes carrying @reviewr, the repository they review
+# reviews are panes carrying @heimdall, the repository they review
 reviews() {
-  tmux list-panes "$@" -F '#{pane_id}	#{@reviewr}' 2>/dev/null | awk -F '\t' '$2 != ""'
+  tmux list-panes "$@" -F '#{pane_id}	#{@heimdall}' 2>/dev/null | awk -F '\t' '$2 != ""'
 }
 
 hide() {
@@ -27,7 +27,7 @@ hide() {
   tmux break-pane -d -s "$1" -t "=$hidden:"
 }
 
-if [ -n "$(tmux show -pqv -t "$pane" @reviewr)" ]; then
+if [ -n "$(tmux show -pqv -t "$pane" @heimdall)" ]; then
   hide "$pane"
   exit 0
 fi
@@ -46,6 +46,6 @@ if [ -n "$parked" ]; then
 fi
 
 new=$(tmux split-window -h -l "$size" -c "$path" -t "$pane" -P -F '#{pane_id}' "$command")
-tmux set -p -t "$new" @reviewr "$repo"
+tmux set -p -t "$new" @heimdall "$repo"
 # closing the review quits its Neovim; the pane goes with it
 tmux set -p -t "$new" remain-on-exit off

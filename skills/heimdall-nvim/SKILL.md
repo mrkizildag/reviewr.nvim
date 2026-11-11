@@ -1,11 +1,11 @@
 ---
-name: reviewr-nvim
-description: Open a reviewr.nvim code review in Neovim for the user (a branch, two refs, staged or uncommitted changes) beside the agent's terminal, drive a review that is already open, and act on the review comments the plugin pastes back. Use when the user asks to review, diff or look over changes in Neovim, to "open the reviewer", or to compare branches, and when a message starts with "Code review comments from my editor:".
+name: heimdall-nvim
+description: Open a heimdall.nvim code review in Neovim for the user (a branch, two refs, staged or uncommitted changes) beside the agent's terminal, drive a review that is already open, and act on the review comments the plugin pastes back. Use when the user asks to review, diff or look over changes in Neovim, to "open the reviewer", or to compare branches, and when a message starts with "Code review comments from my editor:".
 ---
 
-# reviewr.nvim
+# heimdall.nvim
 
-reviewr.nvim opens a review in a Neovim tab: the base on the left, the change on
+heimdall.nvim opens a review in a Neovim tab: the base on the left, the change on
 the right, and every changed file in a panel along the bottom. The user comments
 on lines; `s` pastes all comments into a running agent's input as one message.
 You open reviews for the user and act on what comes back. The user does the
@@ -14,33 +14,33 @@ reviewing.
 ## Check it is installed
 
 ```sh
-nvim --headless -c 'lua io.stdout:write(tostring(pcall(require, "reviewr")) .. "\n")' +qa
+nvim --headless -c 'lua io.stdout:write(tostring(pcall(require, "heimdall")) .. "\n")' +qa
 ```
 
 `false` means it isn't installed: offer the install in this repository's
-`INSTALL.md` (https://github.com/paul-enz/reviewr.nvim) instead of improvising.
+`INSTALL.md` (https://github.com/mrkizildag/heimdall.nvim) instead of improvising.
 
 ## Pick what to review
 
 | The user wants | Neovim command |
 |---|---|
-| everything on the current branch, committed or not, against the default branch (the usual "review my branch") | `ReviewrScope branch` |
-| the working tree against `main` | `ReviewrOpen main` |
-| `feature` against `main` | `ReviewrOpen main feature` |
-| uncommitted changes | `ReviewrOpen` |
-| one commit | `ReviewrScope commit <sha>` |
-| what is staged | `ReviewrScope staged` |
-| a GitHub pull request, without checking it out (needs `gh`) | `ReviewrScope pr <number>` in its repository, or `ReviewrPR owner/repo#<number>` |
-| what you (or another agent) changed in your last turn | `ReviewrScope turn` |
+| everything on the current branch, committed or not, against the default branch (the usual "review my branch") | `HeimdallScope branch` |
+| the working tree against `main` | `HeimdallOpen main` |
+| `feature` against `main` | `HeimdallOpen main feature` |
+| uncommitted changes | `HeimdallOpen` |
+| one commit | `HeimdallScope commit <sha>` |
+| what is staged | `HeimdallScope staged` |
+| a GitHub pull request, without checking it out (needs `gh`) | `HeimdallScope pr <number>` in its repository, or `HeimdallPR owner/repo#<number>` |
+| what you (or another agent) changed in your last turn | `HeimdallScope turn` |
 
 In Rex the plugin watches the agents it can see: when one starts working, it
 snapshots the turn baseline, and when it stops, the open review reloads. So
-after you finish addressing a review, `ReviewrScope turn` in the user's open
+after you finish addressing a review, `HeimdallScope turn` in the user's open
 review shows exactly your changes; suggest it rather than a branch diff.
 
-`ReviewrOpen {base} {head}` diffs `head` against its merge base with `base`, the
+`HeimdallOpen {base} {head}` diffs `head` against its merge base with `base`, the
 way a pull request does, so commits that landed on `base` later don't show.
-Working-tree reviews (no head ref: `branch`, `uncommitted`, `turn`, `ReviewrOpen main`) include uncommitted edits to tracked files and new files once they are `git add`ed (untracked files never appear); a review with two refs compares commits only.
+Working-tree reviews (no head ref: `branch`, `uncommitted`, `turn`, `HeimdallOpen main`) include uncommitted edits to tracked files and new files once they are `git add`ed (untracked files never appear); a review with two refs compares commits only.
 Resolve the user's words to real refs first (`git branch -a`,
 `git rev-parse --verify <ref>`), and ask when a name matches nothing or several
 things. A review that says "No changes to review" with `changed files (0)`
@@ -54,22 +54,22 @@ In Rex (`REX_SESSION` is set), split to the right of your own terminal:
 
 ```sh
 rex split -s "$REX_SESSION" -b "$REX_BLOCK" --split=right --ratio 60 -c "$repo" -- \
-  nvim -c 'ReviewrOpen main feature'
+  nvim -c 'HeimdallOpen main feature'
 ```
 
 Save the block ID it prints (`--json`, `.block_ids[0]`). With the Rex
 integration installed, the user toggles a review with cmd+r: it opens
-`ReviewrScope branch` beside the focused terminal, hides it (the block is
+`HeimdallScope branch` beside the focused terminal, hides it (the block is
 detached but keeps running, comments and all), and shows it again. Pressed in an
 agent's terminal, cmd+r pairs the review with that agent (block label
-`review:<agent block>`, `vim.g.reviewr_agent` inside Neovim): `s` sends to it
+`review:<agent block>`, `vim.g.heimdall_agent` inside Neovim): `s` sends to it
 and the turn view follows only its turns. Unpaired reviews are labelled
 `review`. Before opening one, look for a `review` block of
 the same repository in `rex api call session.list_blocks '{"session_id": "'"$REX_SESSION"'"}'`:
 if it is detached, show it with `session.move_block` beside your terminal
 rather than opening a second review.
 
-In tmux: `tmux split-window -h -c "$repo" "nvim -c 'ReviewrOpen main feature'"`.
+In tmux: `tmux split-window -h -c "$repo" "nvim -c 'HeimdallOpen main feature'"`.
 Elsewhere, give the user the command to run.
 
 Check that it opened: capture the pane (`rex capture -s "$REX_SESSION" -b "$block" --trim`)
@@ -83,7 +83,7 @@ tab switches in place and keeps its comments:
 
 ```sh
 rex send-key -s "$REX_SESSION" -b "$block" escape
-rex send -s "$REX_SESSION" -b "$block" ':ReviewrOpen main other-branch'
+rex send -s "$REX_SESSION" -b "$block" ':HeimdallOpen main other-branch'
 rex send-key -s "$REX_SESSION" -b "$block" enter
 ```
 

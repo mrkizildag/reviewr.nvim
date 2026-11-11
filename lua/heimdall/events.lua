@@ -1,10 +1,10 @@
-local log = require("reviewr.log")
+local log = require("heimdall.log")
 
 local M = {}
 local listeners = {}
 
 local function autocmd_name(event)
-  return "Reviewr" .. event
+  return "Heimdall" .. event
 end
 
 function M.emit(event, data)

@@ -1,4 +1,4 @@
--- reviewr.ui: review tab, diff windows, changed-files panel, signs, extmarks, floats
+-- heimdall.ui: review tab, diff windows, changed-files panel, signs, extmarks, floats
 local M = {}
 
 local state = {
@@ -16,7 +16,7 @@ M.config = {
 
 local function ensure_ns()
   if not state.ns then
-    state.ns = vim.api.nvim_create_namespace("reviewr")
+    state.ns = vim.api.nvim_create_namespace("heimdall")
   end
   return state.ns
 end
@@ -27,24 +27,24 @@ end
 
 local function highlights()
   for name, link in pairs({
-    ReviewrCommentSign = "DiagnosticInfo",
-    ReviewrCommentText = "Comment",
-    ReviewrPanelBorder = "FloatBorder",
-    ReviewrRange = "Visual",
-    ReviewrRangeSign = "DiagnosticInfo",
-    ReviewrButton = "PmenuSel",
-    ReviewrAdded = "Added",
-    ReviewrRemoved = "Removed",
-    ReviewrPending = "DiagnosticWarn",
-    ReviewrOk = "DiagnosticOk",
-    ReviewrFail = "DiagnosticError",
-    ReviewrDim = "Comment",
-    ReviewrNumber = "Number",
-    ReviewrHeading = "Title",
-    ReviewrRule = "FloatBorder",
-    ReviewrPickSel = "CursorLine",
-    ReviewrPickBar = "Function",
-    ReviewrPickBorder = "Function",
+    HeimdallCommentSign = "DiagnosticInfo",
+    HeimdallCommentText = "Comment",
+    HeimdallPanelBorder = "FloatBorder",
+    HeimdallRange = "Visual",
+    HeimdallRangeSign = "DiagnosticInfo",
+    HeimdallButton = "PmenuSel",
+    HeimdallAdded = "Added",
+    HeimdallRemoved = "Removed",
+    HeimdallPending = "DiagnosticWarn",
+    HeimdallOk = "DiagnosticOk",
+    HeimdallFail = "DiagnosticError",
+    HeimdallDim = "Comment",
+    HeimdallNumber = "Number",
+    HeimdallHeading = "Title",
+    HeimdallRule = "FloatBorder",
+    HeimdallPickSel = "CursorLine",
+    HeimdallPickBar = "Function",
+    HeimdallPickBorder = "Function",
   }) do
     vim.api.nvim_set_hl(0, name, { link = link, default = true })
   end
@@ -53,7 +53,7 @@ local function highlights()
   local text = normal.bg or (vim.o.background == "light" and 0xffffff or 0x000000)
   for name, source in pairs(M.BADGES) do
     local src = vim.api.nvim_get_hl(0, { name = source, link = false })
-    vim.api.nvim_set_hl(0, "ReviewrBadge" .. name, { fg = text, bg = src.fg, bold = true })
+    vim.api.nvim_set_hl(0, "HeimdallBadge" .. name, { fg = text, bg = src.fg, bold = true })
   end
 end
 
@@ -73,7 +73,7 @@ local ICONS = {
 
 -- The glyph for `name`: a Nerd Font icon, or plain unicode when `icons` is off.
 function M.icon(name)
-  return ICONS[name][require("reviewr.config").get().icons and 1 or 2]
+  return ICONS[name][require("heimdall.config").get().icons and 1 or 2]
 end
 
 -- A box title: the icon (when there is one) and the text.
@@ -87,13 +87,13 @@ function M.setup(opts)
   ensure_ns()
   highlights()
   vim.api.nvim_create_autocmd("ColorScheme", {
-    group = vim.api.nvim_create_augroup("reviewr_highlights", { clear = true }),
+    group = vim.api.nvim_create_augroup("heimdall_highlights", { clear = true }),
     callback = highlights,
   })
   -- a review often opens before its terminal reaches full size, and Neovim
   -- would hand all the new width to the right pane
   vim.api.nvim_create_autocmd("VimResized", {
-    group = vim.api.nvim_create_augroup("reviewr_resize", { clear = true }),
+    group = vim.api.nvim_create_augroup("heimdall_resize", { clear = true }),
     callback = function() M.equalize() end,
   })
 end
@@ -132,7 +132,7 @@ end
 function M.show_file(left_buf, right_buf, file)
   local d = state.diff
   -- the hint lives in the winbar: statusline plugins such as lualine own the footer
-  local bars = { "  base  ", "%!v:lua.require('reviewr.ui').winbar()" }
+  local bars = { "  base  ", "%!v:lua.require('heimdall.ui').winbar()" }
   for i, pair in ipairs({ { d.left_win, left_buf }, { d.right_win, right_buf } }) do
     vim.api.nvim_win_call(pair[1], function()
       vim.api.nvim_win_set_buf(pair[1], pair[2])
@@ -184,8 +184,8 @@ end
 function M.render_files_panel()
   local buf = files_panel.buf
   if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
-  local store = require("reviewr.store")
-  local function at(b) return b and vim.api.nvim_buf_is_valid(b) and vim.b[b].reviewr_at or nil end
+  local store = require("heimdall.store")
+  local function at(b) return b and vim.api.nvim_buf_is_valid(b) and vim.b[b].heimdall_at or nil end
   local left_at, right_at = at(state.diff.left_buf), at(state.diff.right_buf)
   -- each row: marker, status, path, then +added -deleted the way octo.nvim
   -- shows them, then the comment count
@@ -197,8 +197,8 @@ function M.render_files_panel()
     local line = string.format("%s %s  %s", here and "▶" or " ", f.status, f.path)
     if f.added then
       local plus, minus = "+" .. f.added, "-" .. f.deleted
-      table.insert(marks, { i - 1, #line + 2, #line + 2 + #plus, "ReviewrAdded" })
-      table.insert(marks, { i - 1, #line + 3 + #plus, #line + 3 + #plus + #minus, "ReviewrRemoved" })
+      table.insert(marks, { i - 1, #line + 2, #line + 2 + #plus, "HeimdallAdded" })
+      table.insert(marks, { i - 1, #line + 3 + #plus, #line + 3 + #plus + #minus, "HeimdallRemoved" })
       line = line .. "  " .. plus .. " " .. minus
     end
     lines[i] = line .. (n > 0 and ("  💬 " .. n) or "")
@@ -223,9 +223,9 @@ function M.open_files_panel(files)
     local buf = vim.api.nvim_create_buf(false, true)
     vim.bo[buf].buftype = "nofile"
     vim.bo[buf].bufhidden = "wipe"
-    vim.bo[buf].filetype = "reviewr-files"
+    vim.bo[buf].filetype = "heimdall-files"
     -- the rows, plus the title bar
-    local height = require("reviewr.config").get().files_panel_height + 1
+    local height = require("heimdall.config").get().files_panel_height + 1
     vim.api.nvim_win_call(state.diff.left_win, function() vim.cmd("botright " .. height .. "split") end)
     local win = vim.fn.win_getid(vim.fn.winnr("$"), vim.api.nvim_tabpage_get_number(state.diff.tab))
     vim.api.nvim_win_set_buf(win, buf)
@@ -236,11 +236,11 @@ function M.open_files_panel(files)
     end
     files_panel.win, files_panel.buf = win, buf
     -- the review keys work here too, except those that act on a diff line
-    require("reviewr.keymaps").install(buf, { panel = true })
+    require("heimdall.keymaps").install(buf, { panel = true })
     vim.keymap.set("n", "<CR>", function()
       local f = files_panel.files[vim.fn.line(".")]
       if not f then return end
-      require("reviewr").open_file(f.path)
+      require("heimdall").open_file(f.path)
       if valid_win(state.diff.right_win) then vim.api.nvim_set_current_win(state.diff.right_win) end
     end, { buffer = buf, silent = true, nowait = true })
     if valid_win(origin) then vim.api.nvim_set_current_win(origin) end
@@ -257,7 +257,7 @@ function M.mark_range(bufnr, startl, endl)
   -- marked in the gutter: diff highlighting would hide a line highlight
   for line = startl, math.min(endl, last) do
     pcall(vim.api.nvim_buf_set_extmark, bufnr, ensure_ns(), line - 1, 0, {
-      sign_text = "▌", sign_hl_group = "ReviewrRangeSign", number_hl_group = "ReviewrRange", priority = 50,
+      sign_text = "▌", sign_hl_group = "HeimdallRangeSign", number_hl_group = "HeimdallRange", priority = 50,
     })
   end
 end
@@ -277,15 +277,15 @@ function M.redraw(bufnr)
   end
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
   vim.api.nvim_buf_clear_namespace(bufnr, ensure_ns(), 0, -1)
-  local file, side = vim.b[bufnr].reviewr_file, vim.b[bufnr].reviewr_side
+  local file, side = vim.b[bufnr].heimdall_file, vim.b[bufnr].heimdall_side
   if file then
     local last = vim.api.nvim_buf_line_count(bufnr)
-    for _, c in ipairs(require("reviewr.store").shown(file, side, vim.b[bufnr].reviewr_at)) do
+    for _, c in ipairs(require("heimdall.store").shown(file, side, vim.b[bufnr].heimdall_at)) do
       local row = math.min(c.start, last) - 1
       pcall(vim.api.nvim_buf_set_extmark, bufnr, ensure_ns(), row, 0, {
         sign_text = "💬",
-        sign_hl_group = "ReviewrCommentSign",
-        virt_lines = vim.tbl_map(function(l) return { { "  " .. l, "ReviewrCommentText" } } end,
+        sign_hl_group = "HeimdallCommentSign",
+        virt_lines = vim.tbl_map(function(l) return { { "  " .. l, "HeimdallCommentText" } } end,
           vim.split(c.body or "", "\n", { plain = true })),
         -- Neovim draws nothing above the first line, so that one goes below
         virt_lines_above = row > 0,
@@ -298,10 +298,10 @@ end
 
 -- The comment under the cursor, if the cursor sits inside its range.
 function M.comment_at_cursor()
-  local file = vim.b.reviewr_file
+  local file = vim.b.heimdall_file
   if not file then return nil end
   local lnum = vim.fn.line(".")
-  for _, c in ipairs(require("reviewr.store").shown(file, vim.b.reviewr_side, vim.b.reviewr_at)) do
+  for _, c in ipairs(require("heimdall.store").shown(file, vim.b.heimdall_side, vim.b.heimdall_at)) do
     if lnum >= c.start and lnum <= c["end"] then return c end
   end
   return nil
@@ -316,7 +316,7 @@ function M.toggle_panel()
     return false
   end
   local lines = {}
-  for _, c in ipairs(require("reviewr.store").ordered()) do
+  for _, c in ipairs(require("heimdall.store").ordered()) do
     lines[#lines + 1] = string.format(" %s:%d (%s)", c.file, c.start, c.side)
     lines[#lines + 1] = "   └ " .. (c.body or ""):gsub("\n", " ")
   end
@@ -337,7 +337,7 @@ function M.toggle_panel()
     title = " comments ",
     title_pos = "center",
   })
-  vim.wo[state.panel_win].winhl = "Normal:Normal,FloatBorder:ReviewrPanelBorder"
+  vim.wo[state.panel_win].winhl = "Normal:Normal,FloatBorder:HeimdallPanelBorder"
   for _, key in ipairs({ "l", "q", "<esc>" }) do
     vim.keymap.set("n", key, M.toggle_panel, { buffer = state.panel_buf, silent = true, nowait = true })
   end
@@ -364,7 +364,7 @@ function M.confirm(title, message, on_yes)
     title = " " .. title .. " ",
     title_pos = "center",
   })
-  vim.wo[win].winhl = "Normal:Normal,FloatBorder:ReviewrPanelBorder"
+  vim.wo[win].winhl = "Normal:Normal,FloatBorder:HeimdallPanelBorder"
   local buttons = { "  Yes  ", "  No  " }
   local gap = "   "
   local pad = math.floor((width - vim.fn.strwidth(buttons[1] .. gap .. buttons[2])) / 2)
@@ -378,7 +378,7 @@ function M.confirm(title, message, on_yes)
     vim.api.nvim_buf_clear_namespace(buf, ensure_ns(), 0, -1)
     local start = pad + (selected == 1 and 0 or #buttons[1] + #gap)
     vim.api.nvim_buf_set_extmark(buf, ensure_ns(), 2, start, {
-      end_col = start + #buttons[selected], hl_group = "ReviewrButton",
+      end_col = start + #buttons[selected], hl_group = "HeimdallButton",
     })
     pcall(vim.api.nvim_win_set_cursor, win, { 3, start })
   end
@@ -497,12 +497,12 @@ local function open_pick(all_items, opts, on_choice, release)
   local format = opts.format_item or tostring
   local render = opts.render_item or function(item) return { { { format(item) } } } end
   local ns = ensure_ns()
-  pick_ns = pick_ns or vim.api.nvim_create_namespace("reviewr_pick")
+  pick_ns = pick_ns or vim.api.nvim_create_namespace("heimdall_pick")
 
   local function is_static(item) return type(item) == "table" and (item.heading or item.note) ~= nil end
   local function lines_of(item)
     if is_static(item) then
-      return { { { item.heading or item.note, item.hl or (item.heading and "ReviewrHeading" or "ReviewrDim") } } }
+      return { { { item.heading or item.note, item.hl or (item.heading and "HeimdallHeading" or "HeimdallDim") } } }
     end
     return render(item)
   end
@@ -558,7 +558,7 @@ local function open_pick(all_items, opts, on_choice, release)
 
   local status
   local function footer(side)
-    local chunks = { { " ↵ " .. (opts.action or "select") .. "  / search  esc close" .. (side and "  ^d ^u scroll" or "") .. " ", "ReviewrDim" } }
+    local chunks = { { " ↵ " .. (opts.action or "select") .. "  / search  esc close" .. (side and "  ^d ^u scroll" or "") .. " ", "HeimdallDim" } }
     if status then table.insert(chunks, { status[1] .. " ", status[2] }) end
     return chunks
   end
@@ -605,7 +605,7 @@ local function open_pick(all_items, opts, on_choice, release)
   local win = vim.api.nvim_open_win(buf, true, vim.tbl_extend("force", geo.list, {
     style = "minimal", border = "rounded", zindex = PICK_Z,
   }))
-  vim.wo[win].winhl = "Normal:Normal,FloatBorder:ReviewrPickBorder,FloatTitle:ReviewrPickBorder,FloatFooter:ReviewrDim"
+  vim.wo[win].winhl = "Normal:Normal,FloatBorder:HeimdallPickBorder,FloatTitle:HeimdallPickBorder,FloatFooter:HeimdallDim"
   vim.wo[win].scrolloff = 0
   -- the selection is drawn by paint_selection, not the inherited cursor line
   vim.wo[win].cursorline = false
@@ -620,9 +620,9 @@ local function open_pick(all_items, opts, on_choice, release)
     local e = sel and entries[sel]
     if not e then return end
     for line = e.first, e.last do
-      vim.api.nvim_buf_set_extmark(buf, pick_ns, line - 1, 0, { line_hl_group = "ReviewrPickSel", priority = 10 })
+      vim.api.nvim_buf_set_extmark(buf, pick_ns, line - 1, 0, { line_hl_group = "HeimdallPickSel", priority = 10 })
       vim.api.nvim_buf_set_extmark(buf, pick_ns, line - 1, 0, {
-        virt_text = { { "▎", "ReviewrPickBar" } }, virt_text_pos = "overlay",
+        virt_text = { { "▎", "HeimdallPickBar" } }, virt_text_pos = "overlay",
       })
     end
   end
@@ -712,7 +712,7 @@ local function open_pick(all_items, opts, on_choice, release)
       vim.api.nvim_buf_set_extmark(panel_buf, ns, 0, 0, { virt_text = chunks, virt_text_pos = "right_align" })
     end
     for _, line in ipairs(rules) do
-      vim.api.nvim_buf_set_extmark(panel_buf, ns, line, 0, { end_col = #rule, hl_group = "ReviewrRule", priority = 200 })
+      vim.api.nvim_buf_set_extmark(panel_buf, ns, line, 0, { end_col = #rule, hl_group = "HeimdallRule", priority = 200 })
     end
     vim.api.nvim_win_call(panel_win, function() vim.fn.winrestview({ topline = 1, lnum = 1 }) end)
   end
@@ -729,7 +729,7 @@ local function open_pick(all_items, opts, on_choice, release)
     shown = ck
     local hit = cache[ck]
     if hit then return render_panel(hit[1], hit[2]) end
-    render_panel({ "Loading…" }, { highlights = { { 0, 0, #"Loading…", "ReviewrDim" } } })
+    render_panel({ "Loading…" }, { highlights = { { 0, 0, #"Loading…", "HeimdallDim" } } })
     generation = generation + 1
     local mine = generation
     vim.defer_fn(function()
@@ -797,7 +797,7 @@ local function open_pick(all_items, opts, on_choice, release)
         focusable = false, style = "minimal", border = "rounded", title = " Details ", title_pos = "center",
         zindex = PICK_Z,
       }))
-      vim.wo[panel_win].winhl = "Normal:Normal,FloatBorder:ReviewrPanelBorder,FloatTitle:ReviewrDim,FoldColumn:Normal"
+      vim.wo[panel_win].winhl = "Normal:Normal,FloatBorder:HeimdallPanelBorder,FloatTitle:HeimdallDim,FoldColumn:Normal"
       vim.wo[panel_win].wrap = true
       vim.wo[panel_win].linebreak = true
       vim.wo[panel_win].foldcolumn = "1"
@@ -817,10 +817,10 @@ local function open_pick(all_items, opts, on_choice, release)
       search_win = vim.api.nvim_open_win(search_buf, false, vim.tbl_extend("force", geo.search, {
         style = "minimal", border = "rounded", zindex = PICK_Z,
       }))
-      vim.wo[search_win].winhl = "Normal:Normal,FloatBorder:ReviewrPickBorder"
+      vim.wo[search_win].winhl = "Normal:Normal,FloatBorder:HeimdallPickBorder"
       vim.api.nvim_buf_set_lines(search_buf, 0, -1, false, { query })
       vim.api.nvim_buf_set_extmark(search_buf, ns, 0, 0, {
-        virt_text = { { " / ", "ReviewrPickBorder" } }, virt_text_pos = "inline", right_gravity = false,
+        virt_text = { { " / ", "HeimdallPickBorder" } }, virt_text_pos = "inline", right_gravity = false,
       })
     elseif geo.search then
       vim.api.nvim_win_set_config(search_win, geo.search)
@@ -843,7 +843,7 @@ local function open_pick(all_items, opts, on_choice, release)
   end
 
   local done = false
-  local group = vim.api.nvim_create_augroup("reviewr_pick_" .. buf, { clear = true })
+  local group = vim.api.nvim_create_augroup("heimdall_pick_" .. buf, { clear = true })
   local function finish(choice)
     if done then return end
     done = true
@@ -974,7 +974,7 @@ local function open_pick(all_items, opts, on_choice, release)
   end
   function handle.set_status(text, hl)
     if done then return end
-    status = text and { text, hl or "ReviewrDim" } or nil
+    status = text and { text, hl or "HeimdallDim" } or nil
     vim.api.nvim_win_set_config(win, { footer = footer(panel_win ~= nil), footer_pos = "center" })
   end
   function handle.has_preview(item) return cache[cache_key(item)] ~= nil end
@@ -1013,8 +1013,8 @@ function M.toggle_help(legend)
     help_state.win, help_state.buf = nil, nil
     return false
   end
-  legend = legend or require("reviewr.keymaps").legend
-  local lines = { " reviewr: keys", "" }
+  legend = legend or require("heimdall.keymaps").legend
+  local lines = { " heimdall: keys", "" }
   local width = 28
   for _, row in ipairs(legend) do
     local key = " " .. row[1] .. string.rep(" ", math.max(1, 5 - vim.fn.strwidth(row[1])))
@@ -1038,7 +1038,7 @@ function M.toggle_help(legend)
     title = " ? ",
     title_pos = "center",
   })
-  vim.wo[help_state.win].winhl = "Normal:Normal,FloatBorder:ReviewrPanelBorder"
+  vim.wo[help_state.win].winhl = "Normal:Normal,FloatBorder:HeimdallPanelBorder"
   for _, key in ipairs({ "?", "q", "<esc>" }) do
     vim.keymap.set("n", key, function() M.toggle_help() end,
       { buffer = help_state.buf, silent = true, nowait = true })
@@ -1057,14 +1057,14 @@ function M.hint(count)
 end
 
 function M.winbar()
-  local n = require("reviewr.store").count()
-  local s = require("reviewr.scope").get()
-  local agent = require("reviewr").paired()
+  local n = require("heimdall.store").count()
+  local s = require("heimdall.scope").get()
+  local agent = require("heimdall").paired()
   local name = s and (s.label or s.name)
   local left = "  change " .. (name and ("│ " .. name .. " ") or "")
     .. "│ " .. n .. (n == 1 and " comment" or " comments")
     .. (agent and ("  → " .. agent.name) or "")
-  local right = M.hint(#require("reviewr.store").unsent()) .. " "
+  local right = M.hint(#require("heimdall.store").unsent()) .. " "
   local width = vim.api.nvim_win_get_width(vim.g.statusline_winid or 0)
   local gap = width - vim.fn.strwidth(left) - vim.fn.strwidth(right)
   if gap < 2 then return left end

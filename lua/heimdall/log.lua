@@ -1,4 +1,4 @@
-local config = require("reviewr.config")
+local config = require("heimdall.config")
 
 local M = {}
 local function level_ok(level)
@@ -9,7 +9,7 @@ local function file_path()
   local c = config.get()
   if c.log_file then return c.log_file end
   if not c.debug then return nil end
-  return vim.fn.stdpath("log") .. "/" .. (c.name or "reviewr") .. ".log"
+  return vim.fn.stdpath("log") .. "/" .. (c.name or "heimdall") .. ".log"
 end
 
 local function write(level, msg)

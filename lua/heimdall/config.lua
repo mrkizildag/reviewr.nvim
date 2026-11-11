@@ -1,4 +1,4 @@
-local defaults_mod = require("reviewr.config.defaults")
+local defaults_mod = require("heimdall.config.defaults")
 
 local M = {}
 local cfg = vim.deepcopy(defaults_mod.defaults)
@@ -8,29 +8,29 @@ local levels = { debug = 10, info = 20, warn = 30, error = 40 }
 local function validate(opts)
   opts = opts or {}
   if opts.baseline_trigger and not vim.tbl_contains({ "auto", "open", "agent", "first_comment", "manual" }, opts.baseline_trigger) then
-    error("reviewr: invalid baseline_trigger " .. tostring(opts.baseline_trigger))
+    error("heimdall: invalid baseline_trigger " .. tostring(opts.baseline_trigger))
   end
   if opts.send_mode and not vim.tbl_contains({ "queue", "submit" }, opts.send_mode) then
-    error("reviewr: invalid send_mode " .. tostring(opts.send_mode))
+    error("heimdall: invalid send_mode " .. tostring(opts.send_mode))
   end
   if opts.log_level and not levels[opts.log_level] then
-    error("reviewr: invalid log_level " .. tostring(opts.log_level))
+    error("heimdall: invalid log_level " .. tostring(opts.log_level))
   end
   if opts.comment_box and not vim.tbl_contains({ "other", "same" }, opts.comment_box) then
-    error("reviewr: invalid comment_box " .. tostring(opts.comment_box))
+    error("heimdall: invalid comment_box " .. tostring(opts.comment_box))
   end
   local h = opts.files_panel_height
   if h ~= nil and (type(h) ~= "number" or h < 1 or h % 1 ~= 0) then
-    error("reviewr: invalid files_panel_height " .. tostring(h))
+    error("heimdall: invalid files_panel_height " .. tostring(h))
   end
   if opts.agents ~= nil then
     if type(opts.agents) ~= "table" or not vim.iter(opts.agents):all(function(a) return type(a) == "string" end) then
-      error("reviewr: invalid agents " .. vim.inspect(opts.agents))
+      error("heimdall: invalid agents " .. vim.inspect(opts.agents))
     end
   end
   if opts.private_ref_prefix then
-    if type(opts.private_ref_prefix) ~= "string" or not opts.private_ref_prefix:match("^refs/reviewr") then
-      error("reviewr: invalid private_ref_prefix " .. tostring(opts.private_ref_prefix))
+    if type(opts.private_ref_prefix) ~= "string" or not opts.private_ref_prefix:match("^refs/heimdall") then
+      error("heimdall: invalid private_ref_prefix " .. tostring(opts.private_ref_prefix))
     end
   end
   return true

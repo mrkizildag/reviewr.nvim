@@ -1,15 +1,15 @@
-*reviewr.txt*  Review changes in Neovim and send the comments to a coding agent
+*heimdall.txt*  Review changes in Neovim and send the comments to a coding agent
 
 ==============================================================================
-CONTENTS                                                 *reviewr-contents*
+CONTENTS                                                 *heimdall-contents*
 
-1. Intro ........................................ |reviewr-intro|
-2. Commands ..................................... |reviewr-commands|
-3. Keymaps ...................................... |reviewr-keymaps|
-4. Agents ....................................... |reviewr-agents|
-5. Configuration ................................ |reviewr-config|
+1. Intro ........................................ |heimdall-intro|
+2. Commands ..................................... |heimdall-commands|
+3. Keymaps ...................................... |heimdall-keymaps|
+4. Agents ....................................... |heimdall-agents|
+5. Configuration ................................ |heimdall-config|
 
-INTRO                                                   *reviewr-intro*
+INTRO                                                   *heimdall-intro*
 
 A review opens in a tab of its own: the base on the left, the change on the
 right, and every changed file listed along the bottom. Comments sit on lines
@@ -17,14 +17,14 @@ or ranges of either side and live in memory until the review closes. Each
 records the content its side showed (a commit, the index or the working
 tree) and shows only in views of that content.
 
-COMMANDS                                                *reviewr-commands*
+COMMANDS                                                *heimdall-commands*
 
-  :ReviewrOpen [base] [head] [label]
+  :HeimdallOpen [base] [head] [label]
         No arguments: uncommitted changes. With {base}: the working tree
         against its merge base with {base}. With {base} {head}: the commits
         of {head} against its merge base with {base}. Reviews of the working
         tree cover tracked files only: new files appear once `git add`ed.
-  :ReviewrScope {scope}
+  :HeimdallScope {scope}
         uncommitted, staged, branch (the working tree, commits and all,
         against its merge base with the default branch or the one picked
         with gb), commit {sha} (that commit alone) or turn (the
@@ -32,23 +32,23 @@ COMMANDS                                                *reviewr-commands*
         pull request of this repository, fetched into a private ref and
         shown against its merge base; if its branch is checked out in a
         worktree, that worktree's branch view). Needs the gh CLI.
-  :ReviewrPR [number|owner/repo#number|url]
+  :HeimdallPR [number|owner/repo#number|url]
         Review a pull request. Without an argument, pick among the open
         pull requests you authored or were asked to review. One outside
         the current repository opens in a clone found under the pr.roots
         option, else in a bare clone under pr.cache_dir (no working tree:
         only PR and commit views work there).
-  :[range]ReviewrComment {text}
+  :[range]HeimdallComment {text}
         Comment on the current line or range.
-  :ReviewrTurn
+  :HeimdallTurn
         Snapshot the working tree as the turn baseline, in a private
-        refs/reviewr/ ref. Nothing else in the repository changes.
-  :ReviewrExport [clipboard|send|inbox]
+        refs/heimdall/ ref. Nothing else in the repository changes.
+  :HeimdallExport [clipboard|send|inbox]
         Export every comment, or none if any is invalid.
-  :ReviewrClear
+  :HeimdallClear
         Drop every comment.
 
-KEYMAPS                                                 *reviewr-keymaps*
+KEYMAPS                                                 *heimdall-keymaps*
 
 In the diff panes:
 
@@ -81,23 +81,23 @@ view: j/k, <C-j>/<C-k> or the arrows move, <CR> picks, <Esc> cancels.
 ignoring case); <CR> picks the selected match, <Esc> returns to the list
 keeping the filter, and <Esc> in the list clears it. Window motions such as
 <C-h> and <C-l> do nothing while a picker is open. The pull request
-pickers (gp, and :ReviewrPR without an argument) also show a Details panel
+pickers (gp, and :HeimdallPR without an argument) also show a Details panel
 beside the list (description, checks, review state) when Neovim is at least
 120 columns wide; <C-d> and <C-u> scroll it. Pull requests take two lines
-(title; repo, number, author, age) and :ReviewrPR without an argument groups
+(title; repo, number, author, age) and :HeimdallPR without an argument groups
 them under "Yours" and "Review requested". The PR pickers open at once from the last list fetched and refresh in place;
-lists and PR details are cached under stdpath("cache")/reviewr (option
+lists and PR details are cached under stdpath("cache")/heimdall (option
 cache_dir). Icons are Nerd Font glyphs; set
 icons = false in setup() for plain unicode.
 
-AGENTS                                                  *reviewr-agents*
+AGENTS                                                  *heimdall-agents*
 
 `s` pastes the review into a running agent: in a Neovim |terminal|, a tmux
 pane, a Rex terminal, or a WezTerm pane. tmux and WezTerm panes must work in
 the repository; in Rex, any terminal of Neovim's own session qualifies, and
 terminals of other sessions must work in the repository. With several
 agents, a picker lists them by terminal title. With none it writes
-<repo>/.reviewr/inbox/, and failing that copies to the clipboard. After
+<repo>/.heimdall/inbox/, and failing that copies to the clipboard. After
 sending, the agent's terminal comes forward.
 
 Programs count as agents by the `agents` option. The agent receives every
@@ -110,14 +110,14 @@ A review opened with cmd+r in an agent's Rex terminal is paired with that
 agent: s sends to it, and only its turns move the review's own turn baseline.
 
 In Rex the plugin watches the status that agents report. When a watched agent
-starts a turn, the turn baseline is snapshotted, so :ReviewrScope turn shows
+starts a turn, the turn baseline is snapshotted, so :HeimdallScope turn shows
 what that turn changed; when it finishes, the open review reloads. Copies also
 go out as OSC 52, which reaches the local clipboard from a remote Neovim.
 
-CONFIGURATION                                           *reviewr-config*
+CONFIGURATION                                           *heimdall-config*
 
 >lua
-  require("reviewr").setup({
+  require("heimdall").setup({
     baseline_trigger = "auto",   -- agent in Rex, else open; or open, agent,
                                  -- first_comment, manual
     focus_agent = true,          -- bring the agent's terminal forward after s
@@ -131,7 +131,7 @@ CONFIGURATION                                           *reviewr-config*
   })
 <
 
-Events fire as |User| autocommands named Reviewr{Setup,Opened,ScopeChanged,
+Events fire as |User| autocommands named Heimdall{Setup,Opened,ScopeChanged,
 CommentAdded,CommentEdited,CommentDeleted,Exported,ExportFailed,Cleared,
 TurnMarked}.
 

@@ -3,10 +3,10 @@ local plugin = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.rtp:prepend(plugin)
 vim.env.REX_SESSION, vim.env.TMUX, vim.env.WEZTERM_PANE, vim.env.WEZTERM_UNIX_SOCKET = nil, nil, nil, nil
 
-local reviewr = require("reviewr").setup({ adapters = { "neovim-terminal", "filesystem-inbox" } })
-local ui = require("reviewr.ui")
-local store = require("reviewr.store")
-local transport = require("reviewr.transport")
+local heimdall = require("heimdall").setup({ adapters = { "neovim-terminal", "filesystem-inbox" } })
+local ui = require("heimdall.ui")
+local store = require("heimdall.store")
+local transport = require("heimdall.transport")
 
 -- `rex events` is never started: watchers get a stream that stays open until
 -- a test ends it through its on_exit.
@@ -66,17 +66,17 @@ vim.cmd("cd " .. repo)
 local function lines(buf) return vim.api.nvim_buf_get_lines(buf, 0, -1, false) end
 local function panel_lines() return lines(ui.files_panel().buf) end
 local function marks(buf)
-  return #vim.api.nvim_buf_get_extmarks(buf, vim.api.nvim_create_namespace("reviewr"), 0, -1, {})
+  return #vim.api.nvim_buf_get_extmarks(buf, vim.api.nvim_create_namespace("heimdall"), 0, -1, {})
 end
 
 test("open lists every changed file in a panel under the diff, in its own tab", function()
   local tabs = #vim.api.nvim_list_tabpages()
-  assert(reviewr.open({ "master", "feature" }))
+  assert(heimdall.open({ "master", "feature" }))
   eq(#vim.api.nvim_list_tabpages(), tabs + 1, "tabs")
   eq(panel_lines(), { "▶ A  added.md  +2 -0", "  M  f.txt  +2 -1", "  M  g.lua  +2 -1", "  D  gone.txt  +0 -2" })
   local hl = vim.tbl_map(function(m) return m[4].hl_group end, vim.api.nvim_buf_get_extmarks(ui.files_panel().buf,
-    vim.api.nvim_create_namespace("reviewr"), { 1, 0 }, { 1, -1 }, { details = true }))
-  eq(hl, { "ReviewrAdded", "ReviewrRemoved" }, "counts coloured")
+    vim.api.nvim_create_namespace("heimdall"), { 1, 0 }, { 1, -1 }, { details = true }))
+  eq(hl, { "HeimdallAdded", "HeimdallRemoved" }, "counts coloured")
   local d = ui.panes()
   assert(vim.wo[d.left_win].diff and vim.wo[d.right_win].diff, "diff windows")
   assert(not vim.wo[ui.files_panel().win].diff, "panel must not join the diff")
@@ -99,7 +99,7 @@ test("the review keys work from the panel too: f moves file, s sends, ? shows th
   local sent
   local send = transport.send
   transport.send = function(text, _, cb) sent = text; cb("stub", "stub") end
-  reviewr.add_comment({ file = "f.txt", start = 1, body = "from the panel" })
+  heimdall.add_comment({ file = "f.txt", start = 1, body = "from the panel" })
   vim.api.nvim_feedkeys("s", "x", false)
   transport.send = send
   assert(sent and sent:find("from the panel", 1, true), "s from the panel sends the comments")
@@ -116,14 +116,14 @@ test("the review keys work from the panel too: f moves file, s sends, ? shows th
 end)
 
 test("the base pane shows the merge base, not the moved base branch", function()
-  reviewr.open_file("f.txt")
+  heimdall.open_file("f.txt")
   eq(lines(ui.panes().left_buf), { "a", "b", "c", "d" })
 end)
 
 test("deleted and added files open with an empty side", function()
-  reviewr.open_file("gone.txt")
+  heimdall.open_file("gone.txt")
   eq(lines(ui.panes().right_buf), { "" })
-  reviewr.open_file("added.md")
+  heimdall.open_file("added.md")
   eq(lines(ui.panes().left_buf), { "" })
 end)
 
@@ -136,23 +136,23 @@ test("review keys are bound in both diff buffers", function()
 end)
 
 test("a comment stays on its own file and side", function()
-  reviewr.open_file("g.lua")
+  heimdall.open_file("g.lua")
   vim.api.nvim_set_current_win(ui.panes().right_win)
   vim.api.nvim_win_set_cursor(0, { 2, 0 })
-  vim.cmd("ReviewrComment why uppercase")
+  vim.cmd("HeimdallComment why uppercase")
   eq(marks(ui.panes().right_buf), 1, "right pane")
   eq(marks(ui.panes().left_buf), 0, "left pane")
-  reviewr.open_file("f.txt")
+  heimdall.open_file("f.txt")
   eq(marks(ui.panes().right_buf), 0, "other file")
   eq(panel_lines()[3], "  M  g.lua  +2 -1  💬 1")
-  reviewr.open_file("g.lua")
+  heimdall.open_file("g.lua")
   vim.api.nvim_set_current_win(ui.panes().right_win)
   vim.api.nvim_win_set_cursor(0, { 2, 0 })
   eq(ui.comment_at_cursor().body, "why uppercase")
 end)
 
 test("export copies every comment with the lines it points at and asks the agent to act", function()
-  local ok, n, dest = reviewr.export("clipboard")
+  local ok, n, dest = heimdall.export("clipboard")
   eq({ ok, n, dest }, { true, 1, "clipboard" })
   eq(vim.fn.getreg('"'), table.concat({
     "Code review comments from my editor:",
@@ -163,8 +163,8 @@ test("export copies every comment with the lines it points at and asks the agent
     "",
     "Make the requested changes and answer any questions. Reply per item.",
   }, "\n"))
-  local c = reviewr.add_comment({ file = "f.txt", side = "right", start = 1, ["end"] = 5, body = "first\nsecond" })
-  reviewr.export("clipboard")
+  local c = heimdall.add_comment({ file = "f.txt", side = "right", start = 1, ["end"] = 5, body = "first\nsecond" })
+  heimdall.export("clipboard")
   assert(vim.fn.getreg('"'):find(table.concat({
     "1. f.txt:1-5",
     "   > a",
@@ -176,30 +176,30 @@ test("export copies every comment with the lines it points at and asks the agent
     "",
     "2. g.lua:2",
   }, "\n"), 1, true), vim.fn.getreg('"'))
-  reviewr.delete_comment(c.id)
+  heimdall.delete_comment(c.id)
 end)
 
 test("quoted lines lose the indent they share and keep the rest", function()
   write(repo .. "/nest.lua", { "if a then", "    if b then", "      go()", "    end", "end" })
-  local c = reviewr.add_comment({ file = "nest.lua", side = "right", start = 2, ["end"] = 3, body = "flatten" })
-  reviewr.export("clipboard")
+  local c = heimdall.add_comment({ file = "nest.lua", side = "right", start = 2, ["end"] = 3, body = "flatten" })
+  heimdall.export("clipboard")
   assert(vim.fn.getreg('"'):find("nest.lua:2-3\n   > if b then\n   >   go()\n   Comment: flatten", 1, true),
     vim.fn.getreg('"'))
-  reviewr.delete_comment(c.id)
+  heimdall.delete_comment(c.id)
   vim.fn.delete(repo .. "/nest.lua")
 end)
 
 test("export is all-or-none", function()
-  local bad = reviewr.add_comment({ file = "f.txt", start = 1, body = "" })
+  local bad = heimdall.add_comment({ file = "f.txt", start = 1, body = "" })
   vim.fn.setreg('"', "untouched")
-  local ok, reason = reviewr.export("clipboard")
+  local ok, reason = heimdall.export("clipboard")
   eq({ ok, reason }, { false, "empty body" })
   eq(vim.fn.getreg('"'), "untouched")
-  reviewr.delete_comment(bad.id)
+  heimdall.delete_comment(bad.id)
 end)
 
 test("inbox export writes a git-ignored file", function()
-  local ok, _, path = reviewr.export("inbox")
+  local ok, _, path = heimdall.export("inbox")
   assert(ok and vim.fn.filereadable(path) == 1, tostring(path))
   eq(vim.trim(git("status --porcelain")), "")
 end)
@@ -220,7 +220,7 @@ test("Rex terminals are listed even when another session's blocks can't be", fun
     _G.rex = nil
     return ok and vim.json.encode(out) or ""
   end
-  local list = require("reviewr.rex").terminals()
+  local list = require("heimdall.rex").terminals()
   vim.fn.system = system
   eq(vim.tbl_map(function(t) return t.block_id end, list), { "b:agent" })
 end)
@@ -250,12 +250,12 @@ test("the agents option names which programs count; a paired agent always does",
   vim.cmd("tabnew | terminal " .. bin .. "/myagent")
   vim.wait(500)
   eq(#transport.detect(repo), 0, "not an agent by default")
-  require("reviewr.config").merge({ agents = { "myagent" }, adapters = { "neovim-terminal", "filesystem-inbox" } })
+  require("heimdall.config").merge({ agents = { "myagent" }, adapters = { "neovim-terminal", "filesystem-inbox" } })
   eq(#transport.detect(repo), 1, "configured")
-  require("reviewr.config").merge({ adapters = { "neovim-terminal", "filesystem-inbox" } })
-  vim.g.reviewr_agent = { session = "session:t", block = "block:A", name = "myagent" }
+  require("heimdall.config").merge({ adapters = { "neovim-terminal", "filesystem-inbox" } })
+  vim.g.heimdall_agent = { session = "session:t", block = "block:A", name = "myagent" }
   eq(#transport.detect(repo), 1, "paired")
-  vim.g.reviewr_agent = nil
+  vim.g.heimdall_agent = nil
   vim.cmd("bwipeout!")
 end)
 
@@ -268,7 +268,7 @@ test("send asks which agent when there are several", function()
   local chan = vim.bo.channel
   vim.wait(500)
   store.clear()
-  reviewr.add_comment({ file = "f.txt", start = 1, body = "pick me" })
+  heimdall.add_comment({ file = "f.txt", start = 1, body = "pick me" })
   vim.cmd("tabfirst")
   local offered
   local select = ui.pick
@@ -276,7 +276,7 @@ test("send asks which agent when there are several", function()
     offered = vim.tbl_map(opts.format_item, items)
     for _, c in ipairs(items) do if c.id == chan then return cb(c) end end
   end
-  local ok, n, dest = reviewr.export("send")
+  local ok, n, dest = heimdall.export("send")
   ui.pick = select
   eq(#offered, 2)
   eq({ ok, n, dest }, { true, 1, "aider (nvim terminal)" })
@@ -287,14 +287,14 @@ end)
 
 test("export with no comments is refused", function()
   store.clear()
-  eq({ reviewr.export("clipboard") }, { false, "no comments to export" })
+  eq({ heimdall.export("clipboard") }, { false, "no comments to export" })
 end)
 
 test("staged scope compares HEAD with the index", function()
   write(repo .. "/g.lua", { "staged" })
   git("add g.lua")
   write(repo .. "/g.lua", { "unstaged" })
-  assert(reviewr.set_scope("staged"))
+  assert(heimdall.set_scope("staged"))
   eq(panel_lines(), { "▶ M  g.lua  +1 -4" })
   eq(lines(ui.panes().right_buf), { "staged" })
 end)
@@ -303,9 +303,9 @@ test("turn scope shows only what changed since the last turn", function()
   git("checkout -q -- g.lua")
   git("reset -q")
   write(repo .. "/f.txt", { "first" })
-  reviewr.mark_turn({ repo = repo })
+  heimdall.mark_turn({ repo = repo })
   write(repo .. "/g.lua", { "after turn" })
-  assert(reviewr.set_scope("turn"))
+  assert(heimdall.set_scope("turn"))
   eq(panel_lines(), { "▶ M  g.lua  +1 -1" })
   eq(lines(ui.panes().left_buf), { "staged" })
   eq(vim.trim(git("stash list")), "")
@@ -313,30 +313,30 @@ end)
 
 test("branch scope compares the default branch's merge base with HEAD", function()
   git("checkout -q -- . && git -C " .. repo .. " clean -qfd")
-  assert(reviewr.set_scope("branch"))
+  assert(heimdall.set_scope("branch"))
   eq(vim.tbl_map(function(f) return f.path end, ui.files_panel().files), { "added.md", "f.txt", "g.lua", "gone.txt" })
   eq(ui.panes().file, "g.lua", "keeps the file in view")
 end)
 
 test("a watched agent's turn sets the baseline when it starts and refreshes the review when it ends", function()
-  local rex = require("reviewr.rex")
-  require("reviewr.config").merge({ baseline_trigger = "agent", adapters = { "neovim-terminal", "filesystem-inbox" } })
+  local rex = require("heimdall.rex")
+  require("heimdall.config").merge({ baseline_trigger = "agent", adapters = { "neovim-terminal", "filesystem-inbox" } })
   git("checkout -q -- . && git -C " .. repo .. " clean -qfd")
   write(repo .. "/f.txt", { "before the turn" })
-  assert(reviewr.set_scope("uncommitted"))
+  assert(heimdall.set_scope("uncommitted"))
   local function status(state)
     rex.handle_event(vim.json.encode({ type = "session_event", payload = { event = { type = "block_event", payload = {
       block_id = "block:agent", name = "program_status_changed", payload = { id = "", record = { state = state } },
     } } } }))
   end
-  rex.watch("session:none", "block:agent", { state = "idle", label = "claude", cb = reviewr._on_agent })
+  rex.watch("session:none", "block:agent", { state = "idle", label = "claude", cb = heimdall._on_agent })
   status("working")
   write(repo .. "/g.lua", { "written by the agent" })
   status("blocked")
   eq(vim.tbl_map(function(f) return f.path end, ui.files_panel().files), { "f.txt" }, "no refresh while busy")
   status("idle")
   eq(vim.tbl_map(function(f) return f.path end, ui.files_panel().files), { "f.txt", "g.lua" }, "refreshed")
-  assert(reviewr.set_scope("turn"))
+  assert(heimdall.set_scope("turn"))
   eq(vim.tbl_map(function(f) return f.path end, ui.files_panel().files), { "g.lua" }, "turn shows only the agent's edit")
   rex.unwatch_all()
 end)
@@ -345,7 +345,7 @@ test("copying in Rex also sends OSC 52, so a remote Neovim reaches the local cli
   local sent
   package.loaded["vim.ui.clipboard.osc52"] = { copy = function() return function(lines) sent = lines end end }
   vim.env.REX_SESSION = "session:test"
-  require("reviewr.clipboard").copy("a\nb")
+  require("heimdall.clipboard").copy("a\nb")
   vim.env.REX_SESSION = nil
   package.loaded["vim.ui.clipboard.osc52"] = nil
   eq(sent, { "a", "b" })
@@ -356,10 +356,10 @@ test("branch scope includes uncommitted edits and staged new files, not untracke
   write(repo .. "/brand-new.lua", { "untracked" })
   write(repo .. "/staged-new.lua", { "added" })
   git("add staged-new.lua")
-  assert(reviewr.set_scope("branch"))
+  assert(heimdall.set_scope("branch"))
   eq(vim.tbl_map(function(f) return f.path end, ui.files_panel().files),
     { "added.md", "f.txt", "g.lua", "gone.txt", "staged-new.lua" })
-  reviewr.open_file("g.lua")
+  heimdall.open_file("g.lua")
   eq(lines(ui.panes().right_buf), { "edited, not committed" })
   eq(lines(ui.panes().left_buf), { "one", "two", "three" }, "left is the merge base")
   eq(vim.trim(git("diff --cached --name-only")), "staged-new.lua", "index untouched")
@@ -370,26 +370,26 @@ test("branch scope includes uncommitted edits and staged new files, not untracke
 end)
 
 test("a review paired with an agent keeps its own turn baseline", function()
-  local rex = require("reviewr.rex")
-  vim.g.reviewr_agent = { session = "session:t", block = "block:A", name = "codex" }
+  local rex = require("heimdall.rex")
+  vim.g.heimdall_agent = { session = "session:t", block = "block:A", name = "codex" }
   local function ref(name) return vim.trim(vim.fn.system({ "git", "-C", repo, "for-each-ref", "--format=%(objectname)",
-    "refs/reviewr/" .. repo:gsub("[^%w%._-]", "_") .. "/" .. name })) end
+    "refs/heimdall/" .. repo:gsub("[^%w%._-]", "_") .. "/" .. name })) end
   local shared = ref("turn")
   write(repo .. "/f.txt", { "before A's turn" })
-  rex.watch("session:none", "block:A", { state = "idle", label = "codex", cb = reviewr._on_agent })
+  rex.watch("session:none", "block:A", { state = "idle", label = "codex", cb = heimdall._on_agent })
   rex.handle_event(vim.json.encode({ type = "session_event", payload = { event = { type = "block_event", payload = {
     block_id = "block:A", name = "program_status_changed", payload = { id = "", record = { state = "working" } } } } } }))
   assert(ref("turn-block_A") ~= "", "paired baseline written")
   eq(ref("turn"), shared, "the shared baseline is untouched")
   write(repo .. "/g.lua", { "A's edit" })
-  assert(reviewr.set_scope("turn"))
+  assert(heimdall.set_scope("turn"))
   eq(vim.tbl_map(function(f) return f.path end, ui.files_panel().files), { "g.lua" })
   rex.unwatch_all()
-  vim.g.reviewr_agent = nil
+  vim.g.heimdall_agent = nil
 end)
 
 test("s sends straight to the paired agent; S and a gone agent fall back to choosing", function()
-  local rex = require("reviewr.rex")
+  local rex = require("heimdall.rex")
   local terminals, write, focus, select, available = rex.terminals, rex.write, rex.focus, ui.pick, rex.available
   rex.available = function() return true end
   local alive = true
@@ -402,27 +402,27 @@ test("s sends straight to the paired agent; S and a gone agent fall back to choo
   rex.focus = function() return true end
   ui.pick = function(items, _, cb) picked = #items; cb(nil) end
   vim.env.REX_SESSION = "session:t"
-  vim.g.reviewr_agent = { session = "session:t", block = "block:A", name = "codex" }
-  require("reviewr.config").merge({ adapters = { "rex", "filesystem-inbox" } })
+  vim.g.heimdall_agent = { session = "session:t", block = "block:A", name = "codex" }
+  require("heimdall.config").merge({ adapters = { "rex", "filesystem-inbox" } })
   store.clear()
-  reviewr.add_comment({ file = "g.lua", start = 1, body = "for A" })
-  local ok, _, dest = reviewr.export("send")
+  heimdall.add_comment({ file = "g.lua", start = 1, body = "for A" })
+  local ok, _, dest = heimdall.export("send")
   eq({ ok, wrote, picked }, { true, "block:A", nil })
   assert(dest:find("codex", 1, true), dest)
-  reviewr.export("send", nil, { pick = true })
+  heimdall.export("send", nil, { pick = true })
   assert(picked, "S offers the picker")
   alive, picked = false, nil
-  local _, _, gone = reviewr.export("send")
-  assert(gone and gone:find(".reviewr/inbox", 1, true), tostring(gone))
+  local _, _, gone = heimdall.export("send")
+  assert(gone and gone:find(".heimdall/inbox", 1, true), tostring(gone))
   rex.terminals, rex.write, rex.focus, ui.pick, rex.available = terminals, write, focus, select, available
   vim.env.REX_SESSION = nil
-  require("reviewr.config").merge({ adapters = { "neovim-terminal", "filesystem-inbox" } })
-  vim.g.reviewr_agent = nil
+  require("heimdall.config").merge({ adapters = { "neovim-terminal", "filesystem-inbox" } })
+  vim.g.heimdall_agent = nil
   store.clear()
 end)
 
 test("the diff panes share the width evenly after Neovim is resized", function()
-  assert(reviewr.set_scope("branch"))
+  assert(heimdall.set_scope("branch"))
   local d = ui.panes()
   vim.api.nvim_win_set_width(d.left_win, 10)
   vim.api.nvim_exec_autocmds("VimResized", {})
@@ -434,11 +434,11 @@ test("closing a review that Rex launched quits its Neovim", function()
   local script = vim.fn.tempname() .. ".lua"
   vim.fn.writefile({
     "vim.opt.rtp:prepend(" .. vim.inspect(plugin) .. ")",
-    "vim.g.reviewr_standalone = true",
-    "require('reviewr').setup({})",
+    "vim.g.heimdall_standalone = true",
+    "require('heimdall').setup({})",
     "vim.cmd('cd ' .. " .. vim.inspect(repo) .. ")",
-    "assert(require('reviewr').set_scope('branch'))",
-    "require('reviewr').close()",
+    "assert(require('heimdall').set_scope('branch'))",
+    "require('heimdall').close()",
     "io.stdout:write('still running')",
     "vim.cmd('qall!')",
   }, script)
@@ -447,12 +447,12 @@ test("closing a review that Rex launched quits its Neovim", function()
 end)
 
 test("q asks once: Enter closes, Right then Enter or Esc keeps the review", function()
-  assert(reviewr.set_scope("branch"))
-  local keymaps = require("reviewr.keymaps")
+  assert(heimdall.set_scope("branch"))
+  local keymaps = require("heimdall.keymaps")
   local function press(keys)
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
   end
-  reviewr.add_comment({ file = "g.lua", start = 1, body = "unsent" })
+  heimdall.add_comment({ file = "g.lua", start = 1, body = "unsent" })
   keymaps.quit(); press("<Esc>")
   assert(ui.is_open() and store.count() == 1, "Esc keeps it")
   keymaps.quit(); press("<Right><CR>")
@@ -462,7 +462,7 @@ test("q asks once: Enter closes, Right then Enter or Esc keeps the review", func
 end)
 
 test("u, b and t switch views; gc reviews one picked commit; gb picks the base branch", function()
-  assert(reviewr.set_scope("branch"))
+  assert(heimdall.set_scope("branch"))
   local d = ui.panes()
   for _, key in ipairs({ "u", "b", "t", "gc", "gb" }) do
     assert(vim.fn.maparg(key, "n", false, true).buffer == 1, key .. " not bound in the diff")
@@ -472,10 +472,10 @@ test("u, b and t switch views; gc reviews one picked commit; gb picks the base b
   ui.pick = function(items, _, cb)
     for _, it in ipairs(items) do if vim.startswith(it, feat) then return cb(it) end end
   end
-  reviewr.pick_commit()
+  heimdall.pick_commit()
   eq(vim.tbl_map(function(f) return f.path end, ui.files_panel().files), { "added.md", "f.txt", "g.lua", "gone.txt" })
-  eq(require("reviewr.scope").get().label, "commit " .. feat)
-  reviewr.open_file("f.txt")
+  eq(require("heimdall.scope").get().label, "commit " .. feat)
+  heimdall.open_file("f.txt")
   eq(lines(ui.panes().left_buf), { "a", "b", "c", "d" }, "left is the commit's parent")
   git("branch -f mid feature")
   git("checkout -q -- .")
@@ -484,8 +484,8 @@ test("u, b and t switch views; gc reviews one picked commit; gb picks the base b
     assert(not vim.tbl_contains(items, "feature"), "the current branch is not offered")
     cb("mid")
   end
-  reviewr.pick_base()
-  eq(require("reviewr.scope").get().label, "branch vs mid")
+  heimdall.pick_base()
+  eq(require("heimdall.scope").get().label, "branch vs mid")
   eq(vim.tbl_map(function(f) return f.path end, ui.files_panel().files), { "g.lua" })
   ui.pick = select
   git("checkout -q -- g.lua")
@@ -505,7 +505,7 @@ test("the picker moves with j and arrows, picks with Enter, cancels with Esc", f
   eq(got, nil)
 end)
 
-local function ensure_ns_for_test() return vim.api.nvim_create_namespace("reviewr") end
+local function ensure_ns_for_test() return vim.api.nvim_create_namespace("heimdall") end
 local function pick_win(...) return ui.pick(...).win end
 
 -- the plain text of each line of a rendered row
@@ -653,8 +653,8 @@ test("the badge pills sit at the top right of the panel's title line, not on a r
     ui.pick({ "one" }, {
       prompt = "Pick",
       preview = function(_, done)
-        done({ title, "", "meta" }, { badges = { { " Open ", "ReviewrBadgeOpen" }, { " Approved ", "ReviewrBadgeApproved" } },
-          highlights = { { 0, 0, #title, "ReviewrHeading" } } })
+        done({ title, "", "meta" }, { badges = { { " Open ", "HeimdallBadgeOpen" }, { " Approved ", "HeimdallBadgeApproved" } },
+          highlights = { { 0, 0, #title, "HeimdallHeading" } } })
       end,
     }, function() end)
     vim.wait(300, function() return panel_buf() and vim.api.nvim_buf_get_lines(panel_buf(), 0, 1, false)[1] ~= "Loading…" end)
@@ -718,7 +718,7 @@ test("below 120 columns there is no details panel", function()
 end)
 
 test("PR details render the checks, the counts and an empty description", function()
-  local lines, marks, mark, badges = reviewr.pr_details_lines({
+  local lines, marks, mark, badges = heimdall.pr_details_lines({
     number = 7, title = "Add b", state = "OPEN", isDraft = false, author = { login = "mrk" },
     headRefName = "feat", baseRefName = "main", reviewDecision = "CHANGES_REQUESTED", mergeable = "CONFLICTING",
     additions = 10, deletions = 2, changedFiles = 3, body = "",
@@ -737,17 +737,17 @@ test("PR details render the checks, the counts and an empty description", functi
     "● deploy", ui.RULE, "Description", "No description." })
   local groups = {}
   for _, m in ipairs(marks) do groups[m[4]] = true end
-  for _, g in ipairs({ "ReviewrFail",
-    "ReviewrPending", "ReviewrOk", "ReviewrAdded", "ReviewrRemoved" }) do
+  for _, g in ipairs({ "HeimdallFail",
+    "HeimdallPending", "HeimdallOk", "HeimdallAdded", "HeimdallRemoved" }) do
     assert(groups[g], g .. " is used")
   end
-  for _, g in ipairs({ "ReviewrBadgeOpen", "ReviewrBadgeDraft", "ReviewrBadgeMerged", "ReviewrBadgeApproved" }) do
+  for _, g in ipairs({ "HeimdallBadgeOpen", "HeimdallBadgeDraft", "HeimdallBadgeMerged", "HeimdallBadgeApproved" }) do
     assert(vim.api.nvim_get_hl(0, { name = g }).bg, g .. " has a background")
   end
-  eq(mark, { "✗", "ReviewrFail" }, "the list's checks mark")
-  eq(badges, { { " Open ", "ReviewrBadgeOpen" }, { " Changes requested ", "ReviewrBadgeChanges" },
-    { " Conflicts ", "ReviewrBadgeConflicts" } })
-  local passed = reviewr.pr_details_lines({ number = 1, title = "t", state = "OPEN", statusCheckRollup = {
+  eq(mark, { "✗", "HeimdallFail" }, "the list's checks mark")
+  eq(badges, { { " Open ", "HeimdallBadgeOpen" }, { " Changes requested ", "HeimdallBadgeChanges" },
+    { " Conflicts ", "HeimdallBadgeConflicts" } })
+  local passed = heimdall.pr_details_lines({ number = 1, title = "t", state = "OPEN", statusCheckRollup = {
     { __typename = "CheckRun", name = "a", status = "COMPLETED", conclusion = "SUCCESS" } }, body = "text" })
   eq(passed[8], "All 1 checks passed")
   eq(passed[#passed], "text")
@@ -758,13 +758,13 @@ test("rows of two lines: j/k and the arrows move by item, Enter picks that item,
   local got
   local win = pick_win(items, {
     prompt = "Pick",
-    render_item = function(it) return { { { "title " .. it.n } }, { { "  meta", "ReviewrDim" } } } end,
+    render_item = function(it) return { { { "title " .. it.n } }, { { "  meta", "HeimdallDim" } } } end,
   }, function(c) got = c end)
   local buf = vim.api.nvim_win_get_buf(win)
   eq(#vim.api.nvim_buf_get_lines(buf, 0, -1, false), 6)
   press_keys("jj<Up>")
   eq(vim.api.nvim_win_get_cursor(win)[1], 3)
-  local ns = vim.api.nvim_get_namespaces().reviewr_pick
+  local ns = vim.api.nvim_get_namespaces().heimdall_pick
   local covered = {}
   for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
     if m[4].line_hl_group then table.insert(covered, m[2]) end
@@ -795,7 +795,7 @@ test("a row gains a checks mark once its details are cached", function()
   vim.o.columns = 140
   local win = pick_win({ "one" }, {
     prompt = "Pick",
-    preview = function(_, done) done({ "x" }, { mark = { "✓", "ReviewrOk" } }) end,
+    preview = function(_, done) done({ "x" }, { mark = { "✓", "HeimdallOk" } }) end,
   }, function() end)
   local buf = vim.api.nvim_win_get_buf(win)
   eq(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1], " one")
@@ -808,7 +808,7 @@ test("a row gains a checks mark once its details are cached", function()
 end)
 
 test("icons = false falls back to plain unicode", function()
-  local cfg = require("reviewr.config").get()
+  local cfg = require("heimdall.config").get()
   cfg.icons = false
   eq({ ui.icon("pr_open"), ui.icon("pr_draft"), ui.icon("branch") }, { "●", "○", "⎇" })
   eq(ui.title("pr_open", "Pull requests"), "● Pull requests")
@@ -818,13 +818,13 @@ test("icons = false falls back to plain unicode", function()
 end)
 
 test("the comment box opens over the other pane, or with comment_box = same below the commented lines", function()
-  assert(reviewr.open({ "master" }))
+  assert(heimdall.open({ "master" }))
   store.clear()
-  reviewr.open_file("g.lua")
+  heimdall.open_file("g.lua")
   local d = ui.panes()
   vim.api.nvim_set_current_win(d.right_win)
   vim.api.nvim_win_set_cursor(d.right_win, { 1, 0 })
-  local keymaps = require("reviewr.keymaps")
+  local keymaps = require("heimdall.keymaps")
   local function open_box()
     keymaps.open_comment_box()
     local c = vim.api.nvim_win_get_config(0)
@@ -837,7 +837,7 @@ test("the comment box opens over the other pane, or with comment_box = same belo
   local left, right = vim.api.nvim_win_get_position(d.left_win), vim.api.nvim_win_get_position(d.right_win)
   local box = open_box()
   eq(box.col, left[2], "over the other pane")
-  local cfg = require("reviewr.config").get()
+  local cfg = require("heimdall.config").get()
   cfg.comment_box = "same"
   box = open_box()
   eq(box.col, right[2], "over the pane commented on")
@@ -852,23 +852,23 @@ end)
 test("refresh keeps both panes where they were", function()
   git("checkout -q -- .")
   write(repo .. "/f.txt", vim.split(string.rep("line\n", 60), "\n", { trimempty = true }))
-  assert(reviewr.set_scope("uncommitted"))
+  assert(heimdall.set_scope("uncommitted"))
   local d = ui.panes()
   vim.api.nvim_set_current_win(d.right_win)
   vim.api.nvim_win_set_cursor(d.right_win, { 40, 0 })
-  assert(reviewr.refresh())
+  assert(heimdall.refresh())
   eq(vim.api.nvim_win_get_cursor(ui.panes().right_win)[1], 40)
   eq(vim.api.nvim_get_current_win(), d.right_win, "focus stays")
   git("checkout -q -- .")
 end)
 
 test(":wq in the comment box saves the comment and keeps the review", function()
-  assert(reviewr.open({ "master" }))
+  assert(heimdall.open({ "master" }))
   store.clear()
-  reviewr.open_file("g.lua")
+  heimdall.open_file("g.lua")
   local d = ui.panes()
   vim.api.nvim_set_current_win(d.right_win)
-  require("reviewr.keymaps").open_comment_box()
+  require("heimdall.keymaps").open_comment_box()
   vim.cmd("stopinsert")
   vim.api.nvim_buf_set_lines(0, 0, -1, false, { "saved with wq" })
   vim.cmd("wq")
@@ -877,7 +877,7 @@ test(":wq in the comment box saves the comment and keeps the review", function()
   eq(store.count(), 1)
   eq(store.list()[1].body, "saved with wq")
   eq(vim.api.nvim_get_current_win(), d.right_win, "back in the pane commented on")
-  require("reviewr.keymaps").open_comment_box()
+  require("heimdall.keymaps").open_comment_box()
   vim.cmd("stopinsert")
   vim.api.nvim_buf_set_lines(0, 0, -1, false, { "dropped" })
   vim.cmd("q!")
@@ -889,7 +889,7 @@ test(":wq in the comment box saves the comment and keeps the review", function()
 end)
 
 test("a watched agent is watched again after its event stream ends", function()
-  local rex = require("reviewr.rex")
+  local rex = require("heimdall.rex")
   rex.unwatch_all()
   rex.watch("session:gone", "block:B", { state = "idle", label = "codex", cb = function() end })
   assert(rex.watching("block:B"))
@@ -904,7 +904,7 @@ test("a watched agent is watched again after its event stream ends", function()
 end)
 
 test("a pasted review cannot end the bracketed paste early", function()
-  local rex = require("reviewr.rex")
+  local rex = require("heimdall.rex")
   local terminals, rwrite, focus = rex.terminals, rex.write, rex.focus
   local data
   rex.terminals = function()
@@ -913,17 +913,17 @@ test("a pasted review cannot end the bracketed paste early", function()
   rex.write = function(_, _, d) data = d; return true end
   rex.focus = function() return true end
   vim.env.REX_SESSION = "session:t"
-  vim.g.reviewr_agent = { session = "session:t", block = "block:A", name = "codex" }
-  require("reviewr.config").merge({ adapters = { "rex" } })
+  vim.g.heimdall_agent = { session = "session:t", block = "block:A", name = "codex" }
+  require("heimdall.config").merge({ adapters = { "rex" } })
   store.clear()
-  reviewr.add_comment({ file = "g.lua", start = 1, body = "a\27[201~b" })
-  assert(reviewr.export("send"))
+  heimdall.add_comment({ file = "g.lua", start = 1, body = "a\27[201~b" })
+  assert(heimdall.export("send"))
   local _, ends = data:gsub("\27%[201~", "")
   eq(ends, 1)
   assert(vim.endswith(data, "\27[201~"), "the end marker closes the paste")
   rex.terminals, rex.write, rex.focus = terminals, rwrite, focus
-  vim.env.REX_SESSION, vim.g.reviewr_agent = nil, nil
-  require("reviewr.config").merge({ adapters = { "neovim-terminal", "filesystem-inbox" } })
+  vim.env.REX_SESSION, vim.g.heimdall_agent = nil, nil
+  require("heimdall.config").merge({ adapters = { "neovim-terminal", "filesystem-inbox" } })
   store.clear()
 end)
 
@@ -946,40 +946,40 @@ test("renames, non-ASCII paths, binary and CRLF files open with their real conte
   g("commit -qam change")
   raw("crlf.txt", "one\r\nTWO\r\n")
   vim.cmd("cd " .. other)
-  assert(reviewr.open({ "main~1" }))
+  assert(heimdall.open({ "main~1" }))
   eq(panel_lines(), { "▶ M  bin.dat", "  M  café.txt  +1 -1", "  M  crlf.txt  +1 -1", "  R  renamed.txt  +0 -0" })
   eq(lines(ui.panes().right_buf), { "zz\0cd", "ef" }, "binary")
-  reviewr.open_file("café.txt")
+  heimdall.open_file("café.txt")
   eq({ lines(ui.panes().left_buf), lines(ui.panes().right_buf) }, { { "before" }, { "after" } })
-  reviewr.open_file("renamed.txt")
+  heimdall.open_file("renamed.txt")
   eq(lines(ui.panes().left_buf), { "kept", "lines" }, "the left pane reads the old path")
-  reviewr.open_file("crlf.txt")
+  heimdall.open_file("crlf.txt")
   eq({ lines(ui.panes().left_buf), lines(ui.panes().right_buf) }, { { "one\r", "two\r" }, { "one\r", "TWO\r" } })
   vim.cmd("cd " .. repo)
-  assert(reviewr.open({ "master" }))
+  assert(heimdall.open({ "master" }))
   vim.fn.delete(other, "rf")
 end)
 
 test("a comment quotes the content it was made on and shows only where that content is", function()
   store.clear()
-  assert(reviewr.open({ "master" }))
-  reviewr.open_file("g.lua")
+  assert(heimdall.open({ "master" }))
+  heimdall.open_file("g.lua")
   local d = ui.panes()
   vim.api.nvim_set_current_win(d.left_win)
   vim.api.nvim_win_set_cursor(0, { 2, 0 })
-  vim.cmd("ReviewrComment on the merge base")
+  vim.cmd("HeimdallComment on the merge base")
   vim.api.nvim_set_current_win(d.right_win)
-  vim.cmd("ReviewrComment on the working tree")
+  vim.cmd("HeimdallComment on the working tree")
   local base = vim.trim(git("merge-base master HEAD"))
-  local _, _, _ = reviewr.export("clipboard")
+  local _, _, _ = heimdall.export("clipboard")
   local text = vim.fn.getreg('"')
   assert(text:find("1. g.lua:1\n   > one\n   Comment: on the working tree", 1, true), text)
   assert(text:find("2. g.lua:2\n   > two\n   Comment: on the merge base", 1, true), text)
   write(repo .. "/g.lua", { "one", "two", "edited" })
   git("commit -qam 'move HEAD'")
-  assert(reviewr.set_scope("uncommitted") == nil, "nothing uncommitted")
+  assert(heimdall.set_scope("uncommitted") == nil, "nothing uncommitted")
   write(repo .. "/g.lua", { "one", "two", "edited again" })
-  assert(reviewr.set_scope("uncommitted"))
+  assert(heimdall.set_scope("uncommitted"))
   eq({ marks(ui.panes().left_buf), marks(ui.panes().right_buf) }, { 0, 1 }, "the base comment stays with its base")
   eq(panel_lines(), { "▶ M  g.lua  +1 -1  💬 1" })
   git("checkout -q -- . && git -C " .. repo .. " reset -q --hard HEAD~1")
@@ -988,43 +988,43 @@ end)
 
 test("a left comment on a renamed file quotes the old file", function()
   git("mv g.lua h.lua")
-  assert(reviewr.set_scope("uncommitted"))
+  assert(heimdall.set_scope("uncommitted"))
   eq(panel_lines(), { "▶ R  h.lua  +0 -0" })
   vim.api.nvim_set_current_win(ui.panes().left_win)
-  vim.cmd("ReviewrComment old name")
-  reviewr.export("clipboard")
+  vim.cmd("HeimdallComment old name")
+  heimdall.export("clipboard")
   assert(vim.fn.getreg('"'):find("1. h.lua:1\n   > one\n", 1, true), vim.fn.getreg('"'))
   git("mv h.lua g.lua")
   store.clear()
 end)
 
 test("sent comments don't hold up closing; an edited one does again", function()
-  assert(reviewr.open({ "master" }))
-  local c = reviewr.add_comment({ file = "g.lua", start = 1, body = "will be sent" })
+  assert(heimdall.open({ "master" }))
+  local c = heimdall.add_comment({ file = "g.lua", start = 1, body = "will be sent" })
   eq(ui.hint(#store.unsent()), "s  send to agent    y  copy    ?  all keys")
-  assert(reviewr.export("clipboard"))
+  assert(heimdall.export("clipboard"))
   eq(#store.unsent(), 0)
-  reviewr.edit_comment(c.id, "changed after sending")
+  heimdall.edit_comment(c.id, "changed after sending")
   eq(#store.unsent(), 1, "edited")
-  assert(reviewr.export("clipboard"))
-  require("reviewr.keymaps").quit()
+  assert(heimdall.export("clipboard"))
+  require("heimdall.keymaps").quit()
   assert(not ui.is_open(), "closed without asking")
-  assert(reviewr.open({ "master" }))
+  assert(heimdall.open({ "master" }))
 end)
 
 test("baselines of closed terminals and removed worktrees are pruned; live ones stay", function()
-  local turn = require("reviewr.turn")
+  local turn = require("heimdall.turn")
   local head = vim.trim(git("rev-parse HEAD"))
   local wt = vim.fn.resolve(vim.fn.tempname())
   git("worktree add -q " .. wt)
   wt = vim.trim(sh("git -C " .. wt .. " rev-parse --show-toplevel"))
-  local function ref(r, name) return "refs/reviewr/" .. r:gsub("[^%w%._-]", "_") .. "/" .. name end
+  local function ref(r, name) return "refs/heimdall/" .. r:gsub("[^%w%._-]", "_") .. "/" .. name end
   for _, r in ipairs({ ref(repo, "turn"), ref(repo, "turn-block_live"), ref(repo, "turn-block_gone"),
     ref(wt, "turn"), ref("/no/such/worktree", "turn") }) do
     git("update-ref " .. r .. " " .. head)
   end
   turn.prune(repo, { ["block:live"] = true })
-  local left = vim.split(vim.trim(git("for-each-ref '--format=%(refname)' refs/reviewr")), "\n")
+  local left = vim.split(vim.trim(git("for-each-ref '--format=%(refname)' refs/heimdall")), "\n")
   for _, r in ipairs({ ref(repo, "turn"), ref(repo, "turn-block_live"), ref(wt, "turn") }) do
     assert(vim.tbl_contains(left, r), r .. " kept")
   end
@@ -1032,7 +1032,7 @@ test("baselines of closed terminals and removed worktrees are pruned; live ones 
     assert(not vim.tbl_contains(left, r), r .. " pruned")
   end
   turn.prune(repo, nil)
-  assert(git("for-each-ref refs/reviewr"):find("turn-block_live", 1, true), "unknown terminals: paired kept")
+  assert(git("for-each-ref refs/heimdall"):find("turn-block_live", 1, true), "unknown terminals: paired kept")
   git("worktree remove --force " .. wt)
 end)
 
@@ -1050,7 +1050,7 @@ local function rex_toggle(blocks, foregrounds, focused, entry)
     end,
     exec = function(cmd) return cmd[3] .. "\n", "", 0 end,
   }
-  local mod = dofile(plugin .. "/rex/reviewr/init.lua")
+  local mod = dofile(plugin .. "/rex/heimdall/init.lua")
   mod[entry or "toggle"]({})
   _G.rex = nil
   return vim.tbl_filter(function(c) return c.method ~= "session.list_blocks" and c.method ~= "block.method" end, calls)
@@ -1070,7 +1070,7 @@ test("cmd+r in an agent's terminal opens a review paired with it, then hides and
   eq(block.label, "review:block:A")
   eq(block.options.cwd, "/repo")
   local command = table.concat(block.options.command, " ")
-  assert(command:find("--cmd lua vim.g.reviewr_standalone = true", 1, true), command)
+  assert(command:find("--cmd lua vim.g.heimdall_standalone = true", 1, true), command)
   assert(command:find('block = "block:A", name = "codex"', 1, true), command)
   calls = rex_toggle({ { block_id = "block:A" }, { block_id = "block:R", label = "review:block:A", placement = "placed" } },
     fg, "block:A")
@@ -1105,7 +1105,7 @@ test("cmd+shift+r toggles a PR review kept apart from cmd+r's, paired in an agen
   local block = calls[1].params.layout.block
   eq(block.label, "review:pr:block:A")
   local command = table.concat(block.options.command, " ")
-  assert(command:find("ReviewrPR", 1, true), command)
+  assert(command:find("HeimdallPR", 1, true), command)
   assert(command:find('block = "block:A", name = "claude"', 1, true), command)
   calls = rex_toggle({ { block_id = "block:A" }, { block_id = "block:P", label = "review:pr:block:A", placement = "placed" } },
     fg, "block:A", "open_pr")
@@ -1122,22 +1122,22 @@ test("the changed-files panel keeps the configured height, however few files the
     local win = ui.files_panel().win
     return vim.api.nvim_win_get_height(win) - (vim.wo[win].winbar ~= "" and 1 or 0)
   end
-  require("reviewr").close()
-  assert(reviewr.open({ "master", "feature" }))
+  require("heimdall").close()
+  assert(heimdall.open({ "master", "feature" }))
   eq(rows(), 10, "default")
-  require("reviewr").close()
-  require("reviewr.config").merge({ files_panel_height = 6, adapters = { "neovim-terminal", "filesystem-inbox" } })
-  assert(reviewr.open({ "master", "feature" }))
+  require("heimdall").close()
+  require("heimdall.config").merge({ files_panel_height = 6, adapters = { "neovim-terminal", "filesystem-inbox" } })
+  assert(heimdall.open({ "master", "feature" }))
   eq(#ui.files_panel().files, 4)
   eq(rows(), 6, "configured")
-  local ok = pcall(require("reviewr.config").merge, { files_panel_height = 0 })
+  local ok = pcall(require("heimdall.config").merge, { files_panel_height = 0 })
   assert(not ok, "rejects 0")
-  require("reviewr.config").merge({ adapters = { "neovim-terminal", "filesystem-inbox" } })
+  require("heimdall.config").merge({ adapters = { "neovim-terminal", "filesystem-inbox" } })
 end)
 
 test("tmux: the key shows a review beside the pane, hides it, and brings the same one back", function()
   if vim.fn.executable("tmux") == 0 then return end
-  local sock = "reviewr-test-" .. vim.fn.getpid()
+  local sock = "heimdall-test-" .. vim.fn.getpid()
   local function tmux(...)
     local r = vim.system(vim.list_extend({ "tmux", "-L", sock, "-f", "/dev/null" }, { ... }), { text = true }):wait()
     return vim.trim(r.stdout or ""), r.code
@@ -1145,8 +1145,8 @@ test("tmux: the key shows a review beside the pane, hides it, and brings the sam
   tmux("new-session", "-d", "-s", "main", "-x", "200", "-y", "50", "-c", repo)
   local socket_path = tmux("display", "-p", "#{socket_path}")
   local env = { TMUX = socket_path .. ",0,0" }
-  tmux("set", "-g", "@reviewr-command", "sleep 600")
-  local _, code = tmux("run-shell", plugin .. "/tmux/reviewr.tmux")
+  tmux("set", "-g", "@heimdall-command", "sleep 600")
+  local _, code = tmux("run-shell", plugin .. "/tmux/heimdall.tmux")
   eq(code, 0, "loads")
   assert(tmux("list-keys", "-T", "prefix"):find("prefix R%s+run%-shell[^\n]*toggle%.sh"), "prefix R bound")
   assert(tmux("list-keys", "-T", "root"):find("root User9%s+run%-shell[^\n]*toggle%.sh"), "cmd+r sequence bound")
@@ -1155,7 +1155,7 @@ test("tmux: the key shows a review beside the pane, hides it, and brings the sam
     local r = vim.system({ "sh", plugin .. "/tmux/toggle.sh", pane }, { env = env, text = true }):wait()
     eq(r.code, 0, "toggle " .. (r.stderr or ""))
   end
-  local function panes(target) return vim.split(tmux("list-panes", "-t", target, "-F", "#{pane_id}\t#{@reviewr}"), "\n") end
+  local function panes(target) return vim.split(tmux("list-panes", "-t", target, "-F", "#{pane_id}\t#{@heimdall}"), "\n") end
   toggle(first)
   local shown = panes("main")
   eq(#shown, 2, "opened beside")
@@ -1164,7 +1164,7 @@ test("tmux: the key shows a review beside the pane, hides it, and brings the sam
   toggle(first)
   eq(#panes("main"), 1, "hidden")
   assert(vim.tbl_contains(vim.tbl_map(function(l) return vim.split(l, "\t")[1] end, vim.split(
-    tmux("list-panes", "-s", "-t", "=reviewr", "-F", "#{pane_id}"), "\n")), review), "kept running")
+    tmux("list-panes", "-s", "-t", "=heimdall", "-F", "#{pane_id}"), "\n")), review), "kept running")
   toggle(first)
   eq(vim.tbl_map(function(l) return vim.split(l, "\t")[1] end, panes("main")), { first, review }, "the same review back")
   toggle(review)
@@ -1174,7 +1174,7 @@ end)
 
 test("the diff panes mark the cursor line by its number only, so no underline crosses the diff", function()
   vim.o.cursorline = true
-  assert(reviewr.open({ "master", "feature" }))
+  assert(heimdall.open({ "master", "feature" }))
   local d = ui.panes()
   for _, w in ipairs({ d.left_win, d.right_win }) do eq(vim.wo[w].cursorlineopt, "number") end
   eq(vim.wo[ui.files_panel().win].cursorlineopt, "line", "the panel highlights its whole row")
@@ -1186,16 +1186,16 @@ test("the diff panes mark the cursor line by its number only, so no underline cr
 end)
 
 test("with nothing to review the tab still opens, says so, and fills in on refresh", function()
-  require("reviewr").close()
+  require("heimdall").close()
   git("checkout -q -- .")
-  eq(reviewr.set_scope("uncommitted"), nil, "nothing to review")
+  eq(heimdall.set_scope("uncommitted"), nil, "nothing to review")
   assert(ui.is_open(), "the review tab is open")
   eq(vim.wo[ui.files_panel().win].winbar, "  changed files (0)  ")
   eq(lines(ui.panes().right_buf), { "  No changes to review (uncommitted)." })
   vim.api.nvim_set_current_win(ui.panes().right_win)
   assert(vim.fn.maparg("q", "n", false, true).buffer == 1, "keys work in the empty review")
   write(repo .. "/g.lua", { "a change" })
-  assert(reviewr.refresh(), "fills in")
+  assert(heimdall.refresh(), "fills in")
   eq(panel_lines()[1]:match("g%.lua") ~= nil, true)
   git("checkout -q -- .")
 end)
@@ -1214,7 +1214,7 @@ test("an edit in the same second as the commit, at the same size, still shows", 
     write(other .. "/a.txt", { "ONE" })
   until os.time() == second
   vim.wait(1100)
-  local tree = require("reviewr.git").snapshot(other)
+  local tree = require("heimdall.git").snapshot(other)
   eq(vim.trim(g("diff --name-only HEAD " .. tree)), "a.txt")
   vim.fn.delete(other, "rf")
 end)
@@ -1251,7 +1251,7 @@ do
   pr.push = function(args) return in_(pr.seed, args) end
 end
 
-local github = require("reviewr.github")
+local github = require("heimdall.github")
 local gh_run = github.run
 local function view(n, extra)
   return vim.tbl_extend("force", { number = n, title = "Add b", baseRefName = "main", headRefName = "feat",
@@ -1263,27 +1263,27 @@ local function files_shown()
   return vim.tbl_map(function(f) return f.path end, ui.files_panel().files)
 end
 local function user_refs()
-  return pr.git("for-each-ref --format='%(refname) %(objectname)' | grep -v refs/reviewr; git -C " .. pr.clone
+  return pr.git("for-each-ref --format='%(refname) %(objectname)' | grep -v refs/heimdall; git -C " .. pr.clone
     .. " rev-parse HEAD; git -C " .. pr.clone .. " status --porcelain")
 end
 local function leave_pr_review()
-  reviewr.close()
+  heimdall.close()
   vim.cmd("cd " .. repo)
 end
 
 test("pr scope shows the PR's files against its merge base and leaves the user's refs, index and HEAD alone", function()
   gh_stub(function() return view(7) end)
   local before = user_refs()
-  reviewr.close()
+  heimdall.close()
   vim.cmd("cd " .. pr.clone)
-  assert(reviewr.set_scope("pr", { pr = 7 }))
+  assert(heimdall.set_scope("pr", { pr = 7 }))
   eq(files_shown(), { "a.txt", "b.txt" }, "main's own commit is not part of the PR")
-  eq(require("reviewr.scope").get().label, "PR #7: Add b")
-  reviewr.open_file("a.txt")
+  eq(require("heimdall.scope").get().label, "PR #7: Add b")
+  heimdall.open_file("a.txt")
   eq(lines(ui.panes().left_buf), { "one", "two" }, "left is the merge base")
   eq(lines(ui.panes().right_buf), { "one", "TWO" })
   eq(user_refs(), before)
-  assert(vim.trim(pr.git("rev-parse refs/reviewr/pr/7")) ~= "", "head kept in a private ref")
+  assert(vim.trim(pr.git("rev-parse refs/heimdall/pr/7")) ~= "", "head kept in a private ref")
 end)
 
 test("refresh in a PR view fetches again, so a new push shows", function()
@@ -1291,16 +1291,16 @@ test("refresh in a PR view fetches again, so a new push shows", function()
   write(pr.seed .. "/d.txt", { "later" })
   pr.push("add . && git -C " .. pr.seed .. " commit -qm later && git -C " .. pr.seed .. " push -q -f origin HEAD:refs/pull/7/head")
   pr.push("checkout -q main")
-  assert(reviewr.refresh())
+  assert(heimdall.refresh())
   eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
 end)
 
 test("comments on a PR view export in the usual message", function()
   store.clear()
-  reviewr.open_file("b.txt")
+  heimdall.open_file("b.txt")
   vim.api.nvim_set_current_win(ui.panes().right_win)
-  reviewr.add_comment({ start = 2, body = "why world" })
-  local ok, n = reviewr.export("clipboard")
+  heimdall.add_comment({ start = 2, body = "why world" })
+  local ok, n = heimdall.export("clipboard")
   eq({ ok, n }, { true, 1 })
   eq(vim.fn.getreg('"'), table.concat({
     "Code review comments from my editor:",
@@ -1318,20 +1318,20 @@ test("a fetch failure keeps the current view and reports git's error", function(
   gh_stub(function() return view(8) end)
   local notes, notify = {}, vim.notify
   vim.notify = function(msg) table.insert(notes, msg) end
-  local res = reviewr.set_scope("pr", { pr = 8 })
+  local res = heimdall.set_scope("pr", { pr = 8 })
   vim.notify = notify
   eq(res, nil)
-  eq(require("reviewr.scope").get().label, "PR #7: Add b")
+  eq(require("heimdall.scope").get().label, "PR #7: Add b")
   eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
   assert(notes[1] and notes[1]:find("could not fetch PR #8", 1, true) and notes[1]:find("refs/pull/8/head", 1, true),
     vim.inspect(notes))
 end)
 
-local pcache = require("reviewr.cache")
+local pcache = require("heimdall.cache")
 local gh_run_async = github.run_async
 local function fresh_cache()
   local dir = vim.fn.tempname()
-  require("reviewr.config").get().cache_dir = dir
+  require("heimdall.config").get().cache_dir = dir
   return dir
 end
 -- handler(args, cb) answers the async gh calls, now or later
@@ -1358,12 +1358,12 @@ local function cursor_line() return picker_lines()[vim.api.nvim_win_get_cursor(0
 test("gp opens from the cached list at once, then updates in place keeping the selection by url", function()
   fresh_cache()
   assert(vim.fn.maparg("gp", "n", false, true).buffer == 1, "gp not bound in the diff")
-  local repo = require("reviewr.state").get().repo
+  local repo = require("heimdall.state").get().repo
   pcache.write(pcache.list_path(repo), { pr_item(3, "Other"), pr_item(7, "Add b", { isDraft = true }) })
   local fetched
   gh_async(function(args, cb) if is_list(args) then fetched = cb end end)
   gh_stub(function() return view(7) end)
-  reviewr.pick_pr()
+  heimdall.pick_pr()
   assert(fetched, "the fetch started")
   eq(#picker_lines(), 4, "the cached rows are already shown")
   assert(footer_text():find("refreshing…", 1, true), "footer says it is refreshing")
@@ -1375,7 +1375,7 @@ test("gp opens from the cached list at once, then updates in place keeping the s
   assert(not footer_text():find("refreshing", 1, true), "footer is clear again")
   eq(pcache.read(pcache.list_path(repo))[1].number, 9, "the new list is cached")
   press_keys("<CR>")
-  eq(require("reviewr.scope").get().label, "PR #7: Add b")
+  eq(require("heimdall.scope").get().label, "PR #7: Add b")
   leave_pr_review()
 end)
 
@@ -1383,7 +1383,7 @@ test("with no cached list the picker shows a loading line, then the items", func
   fresh_cache()
   local fetched
   gh_async(function(args, cb) if is_list(args) then fetched = cb end end)
-  reviewr.pick_pr()
+  heimdall.pick_pr()
   assert(picker_lines()[1]:find("Loading pull requests…", 1, true))
   press_keys("<CR>")
   assert(vim.api.nvim_win_get_config(0).relative ~= "", "Enter on the loading line does nothing")
@@ -1394,19 +1394,19 @@ end)
 
 test("a failed fetch keeps the cached list and says offline; with no cache it shows the error", function()
   fresh_cache()
-  local git = require("reviewr.git")
-  local repo = (require("reviewr.state").get() or {}).repo or git.git_root(vim.fn.getcwd()) or vim.fn.getcwd()
+  local git = require("heimdall.git")
+  local repo = (require("heimdall.state").get() or {}).repo or git.git_root(vim.fn.getcwd()) or vim.fn.getcwd()
   pcache.write(pcache.list_path(repo), { pr_item(3, "Other") })
   local fetched
   gh_async(function(_, cb) fetched = cb end)
-  reviewr.pick_pr()
+  heimdall.pick_pr()
   fetched(nil, "no route to host\nmore")
   assert(picker_lines()[1]:find("Other", 1, true), "cached rows kept")
   assert(footer_text():find("offline: no route to host", 1, true))
   assert(not footer_text():find("more", 1, true), "only the first line")
   press_keys("<Esc>")
   fresh_cache()
-  reviewr.pick_pr()
+  heimdall.pick_pr()
   fetched(nil, "boom")
   assert(picker_lines()[1]:find("Could not load pull requests: boom", 1, true))
   local win = vim.api.nvim_get_current_win()
@@ -1414,7 +1414,7 @@ test("a failed fetch keeps the cached list and says offline; with no cache it sh
   assert(not vim.api.nvim_win_is_valid(win), "Esc closes")
 end)
 
-test(":ReviewrPR without an argument opens the cached list with check marks from the rollup state", function()
+test(":HeimdallPR without an argument opens the cached list with check marks from the rollup state", function()
   fresh_cache()
   local function found(n, repo, extra)
     return vim.tbl_extend("force", pr_item(n, "T" .. n, { repository = { nameWithOwner = repo } }), extra)
@@ -1426,7 +1426,7 @@ test(":ReviewrPR without an argument opens the cached list with check marks from
     found(4, "acme/lib", { section = "requested" }),
   })
   gh_async(function() end)
-  reviewr.open_pr()
+  heimdall.open_pr()
   local lines = picker_lines()
   eq(#lines, 2 + 4 * 2)
   eq(lines[1], " Yours")
@@ -1475,7 +1475,7 @@ test("the first eight details load in the background, four gh processes at a tim
     max_running = math.max(max_running, running)
     table.insert(held, function() running = running - 1; cb(details_of(tonumber(args[3]))) end)
   end)
-  reviewr.open_pr()
+  heimdall.open_pr()
   eq({ started, running }, { 4, 4 })
   while #held > 0 do table.remove(held, 1)() end
   eq(started, 8)
@@ -1502,7 +1502,7 @@ test("details from disk are reused only while the PR's updatedAt matches", funct
       cb(details_of(2))
     end
   end)
-  reviewr.open_pr()
+  heimdall.open_pr()
   eq(asked, { 2 })
   eq(pcache.read(pcache.details_path(changed.url)).updatedAt, changed.updatedAt, "refetched details are stored")
   press_keys("<Esc>")
@@ -1510,19 +1510,19 @@ end)
 
 test("a PR whose head branch is checked out in a worktree opens that worktree's branch view", function()
   local wt = vim.fn.resolve(pr.base .. "/wt")
-  pr.git("worktree add -q -b feat " .. wt .. " refs/reviewr/pr/7")
+  pr.git("worktree add -q -b feat " .. wt .. " refs/heimdall/pr/7")
   gh_stub(function() return view(7) end)
   vim.cmd("cd " .. pr.clone)
   local notes, notify = {}, vim.notify
   vim.notify = function(msg) table.insert(notes, msg) end
-  assert(reviewr.set_scope("pr", { pr = 7 }))
+  assert(heimdall.set_scope("pr", { pr = 7 }))
   vim.notify = notify
   write(wt .. "/a.txt", { "one", "TWO", "uncommitted" })
-  assert(reviewr.refresh())
-  eq(require("reviewr.scope").get().repo, wt)
-  eq(require("reviewr.scope").get().name, "branch")
+  assert(heimdall.refresh())
+  eq(require("heimdall.scope").get().repo, wt)
+  eq(require("heimdall.scope").get().name, "branch")
   eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
-  reviewr.open_file("a.txt")
+  heimdall.open_file("a.txt")
   eq(lines(ui.panes().right_buf), { "one", "TWO", "uncommitted" }, "the worktree's edits show")
   assert(vim.tbl_contains(vim.tbl_map(function(m) return m:find("checked out", 1, true) ~= nil end, notes), true),
     "tells the user it switched")
@@ -1531,17 +1531,17 @@ test("a PR whose head branch is checked out in a worktree opens that worktree's 
   pr.git("branch -D feat")
 end)
 
-test(":ReviewrPR owner/repo#n from outside finds the clone under pr.roots", function()
+test(":HeimdallPR owner/repo#n from outside finds the clone under pr.roots", function()
   gh_stub(function(args)
     assert(vim.tbl_contains(args, "acme/widgets"), "views the PR in its own repository")
     return view(7)
   end)
-  local roots = require("reviewr.config").get().pr.roots
-  require("reviewr.config").get().pr.roots = { pr.base .. "/roots" }
+  local roots = require("heimdall.config").get().pr.roots
+  require("heimdall.config").get().pr.roots = { pr.base .. "/roots" }
   vim.cmd("cd " .. pr.base .. "/elsewhere")
-  vim.cmd("ReviewrPR acme/widgets#7")
-  require("reviewr.config").get().pr.roots = roots
-  eq(require("reviewr.scope").get().repo, pr.clone)
+  vim.cmd("HeimdallPR acme/widgets#7")
+  require("heimdall.config").get().pr.roots = roots
+  eq(require("heimdall.scope").get().repo, pr.clone)
   eq(vim.fn.resolve(vim.fn.getcwd()), pr.clone)
   eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
   leave_pr_review()
@@ -1553,14 +1553,14 @@ test("in a bare clone, working-tree views say so and PR and commit views work", 
   sh("git -C " .. bare .. " remote set-url origin https://github.com/acme/widgets.git")
   sh("git -C " .. bare .. " config url." .. pr.origin .. ".insteadOf https://github.com/acme/widgets.git")
   gh_stub(function() return view(7) end)
-  assert(reviewr.set_scope("pr", { pr = 7, dir = bare }))
+  assert(heimdall.set_scope("pr", { pr = 7, dir = bare }))
   eq(files_shown(), { "a.txt", "b.txt", "d.txt" })
   local notes, notify = {}, vim.notify
   vim.notify = function(msg) table.insert(notes, msg) end
-  local res = reviewr.set_scope("branch")
+  local res = heimdall.set_scope("branch")
   vim.notify = notify
   eq(res, nil)
-  eq(notes, { "reviewr: no working tree in this clone; only PR and commit views work" })
+  eq(notes, { "heimdall: no working tree in this clone; only PR and commit views work" })
   leave_pr_review()
   github.run = gh_run
   github.run_async = gh_run_async
@@ -1568,8 +1568,8 @@ end)
 
 test("close drops comments and the review tab, even as the only tab", function()
   vim.cmd("tabonly")
-  reviewr.add_comment({ file = "g.lua", start = 1, body = "x" })
-  reviewr.close()
+  heimdall.add_comment({ file = "g.lua", start = 1, body = "x" })
+  heimdall.close()
   eq(store.count(), 0)
   assert(not ui.is_open())
   eq(#vim.api.nvim_list_tabpages(), 1)

@@ -1,9 +1,9 @@
--- reviewr.nvim transport layer: mux-agnostic delivery of the review.
-local config = require("reviewr.config")
+-- heimdall.nvim transport layer: mux-agnostic delivery of the review.
+local config = require("heimdall.config")
 
 local M = {}
 
-M.AGENTS = require("reviewr.config.defaults").defaults.agents
+M.AGENTS = require("heimdall.config.defaults").defaults.agents
 
 local function in_path(bin)
   return vim.fn.executable(bin) == 1
@@ -29,7 +29,7 @@ end
 -- own agents list may name programs this one doesn't).
 local function is_agent(name)
   if name == nil then return false end
-  local paired = vim.g.reviewr_agent
+  local paired = vim.g.heimdall_agent
   return vim.tbl_contains(config.get().agents or M.AGENTS, name)
     or (type(paired) == "table" and paired.name == name)
 end
@@ -125,7 +125,7 @@ end
 -- other sessions that work in the repo.
 function M.rex_candidates(repo_root)
   local cands = {}
-  for _, t in ipairs(require("reviewr.rex").terminals()) do
+  for _, t in ipairs(require("heimdall.rex").terminals()) do
     local c = rex_cand(t, repo_root)
     if c and (c.own or c.here) then table.insert(cands, c) end
   end
@@ -134,7 +134,7 @@ end
 
 -- The agent running in one Rex terminal, if it still runs one.
 function M.rex_candidate(block_id)
-  for _, t in ipairs(require("reviewr.rex").terminals()) do
+  for _, t in ipairs(require("heimdall.rex").terminals()) do
     if t.block_id == block_id then return rex_cand(t, nil) end
   end
   return nil
@@ -161,7 +161,7 @@ function M.detect(repo_root)
   local cands = {}
   vim.list_extend(cands, nvim_terminal_candidates())
   if vim.env.TMUX and in_path("tmux") then vim.list_extend(cands, tmux_candidates(repo_root)) end
-  if require("reviewr.rex").available() then vim.list_extend(cands, M.rex_candidates(repo_root)) end
+  if require("heimdall.rex").available() then vim.list_extend(cands, M.rex_candidates(repo_root)) end
   if (vim.env.WEZTERM_UNIX_SOCKET or vim.env.WEZTERM_PANE) and in_path("wezterm") then
     vim.list_extend(cands, wezterm_candidates(repo_root))
   end
@@ -188,8 +188,8 @@ local adapters = {
   },
   ["tmux"] = {
     send = function(cand, payload, mode)
-      assert(run({ "tmux", "load-buffer", "-b", "reviewr", "-" }, payload), "tmux load-buffer failed")
-      assert(run({ "tmux", "paste-buffer", "-p", "-d", "-b", "reviewr", "-t", cand.id }), "tmux paste-buffer failed")
+      assert(run({ "tmux", "load-buffer", "-b", "heimdall", "-" }, payload), "tmux load-buffer failed")
+      assert(run({ "tmux", "paste-buffer", "-p", "-d", "-b", "heimdall", "-t", cand.id }), "tmux paste-buffer failed")
       if mode == "submit" then run({ "tmux", "send-keys", "-t", cand.id, "Enter" }) end
     end,
     focus = function(cand)
@@ -199,12 +199,12 @@ local adapters = {
   },
   ["rex"] = {
     send = function(cand, payload, mode)
-      local rex = require("reviewr.rex")
+      local rex = require("heimdall.rex")
       assert(rex.write(cand.meta.session, cand.id, bracketed(payload)), "rex write failed for " .. cand.id)
       if mode == "submit" then rex.write(cand.meta.session, cand.id, "\r") end
     end,
     focus = function(cand)
-      require("reviewr.rex").focus(cand.meta.session, cand.id)
+      require("heimdall.rex").focus(cand.meta.session, cand.id)
     end,
   },
   ["wezterm"] = {
@@ -223,7 +223,7 @@ local function enabled(name)
 end
 
 function M.write_inbox(repo, payload)
-  local dir = repo .. "/.reviewr"
+  local dir = repo .. "/.heimdall"
   local inbox = dir .. "/inbox"
   vim.fn.mkdir(inbox, "p")
   if vim.fn.filereadable(dir .. "/.gitignore") == 0 then vim.fn.writefile({ "*" }, dir .. "/.gitignore") end
@@ -245,7 +245,7 @@ function M.send(text, opts, cb)
       local ok, path = pcall(M.write_inbox, opts.repo, text)
       if ok then return cb("filesystem-inbox", path) end
     end
-    require("reviewr.clipboard").copy(text)
+    require("heimdall.clipboard").copy(text)
     return cb("clipboard", "clipboard")
   end
   local function deliver(c)
@@ -259,7 +259,7 @@ function M.send(text, opts, cb)
   local cands = vim.tbl_filter(function(c) return enabled(c.transport) end, M.detect(opts.repo))
   if #cands == 0 then return fallback() end
   if #cands == 1 and not opts.pick then return deliver(cands[1]) end
-  require("reviewr.ui").pick(cands, { prompt = "Send review to", format_item = function(c) return c.label end }, function(c)
+  require("heimdall.ui").pick(cands, { prompt = "Send review to", format_item = function(c) return c.label end }, function(c)
     if c then deliver(c) else cb(nil, "cancelled") end
   end)
 end
