@@ -76,7 +76,11 @@ In the diff panes:
 The changed-files panel has the same keys, except those that act on a line
 of the diff (c, e, d, n, N, ]c, [c); there <CR> opens the file under the
 cursor. The pickers (gc, gb, gp, S) open a small centered list over a blank
-view: j/k or the arrows move, <CR> picks, <Esc> cancels. The pull request
+view: j/k, <C-j>/<C-k> or the arrows move, <CR> picks, <Esc> cancels.
+/ opens a search box that filters as you type (every word, any order,
+ignoring case); <CR> picks the selected match, <Esc> returns to the list
+keeping the filter, and <Esc> in the list clears it. Window motions such as
+<C-h> and <C-l> do nothing while a picker is open. The pull request
 pickers (gp, and :ReviewrPR without an argument) also show a Details panel
 beside the list (description, checks, review state) when Neovim is at least
 120 columns wide; <C-d> and <C-u> scroll it. Pull requests take two lines

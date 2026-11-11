@@ -474,8 +474,8 @@ local function restore_chrome()
 end
 
 -- A list in a centered box over a blank backdrop, taking vim.ui.select's
--- arguments: j/k or the arrows move, <CR> picks, <Esc> or q cancels
--- (on_choice(nil)). Returns a handle: { win, is_open(), set_items(items),
+-- arguments: j/k or the arrows move, <CR> picks, / filters by words, <Esc>
+-- clears the filter or cancels (on_choice(nil)), q cancels. Returns a handle: { win, is_open(), set_items(items),
 -- set_status(text, hl), set_preview(item, lines, popts), has_preview(item) }.
 --   opts.prompt       box title
 --   opts.format_item  one plain line per item, or
@@ -484,14 +484,16 @@ end
 --   opts.key          item -> string identifying it across set_items
 --   opts.stamp        item -> string; a cached preview is dropped when it changes
 --   opts.mark         item -> { text, hl } shown at the right of its first line
+--   opts.search_text  item -> the text `/` matches (default: its rendered rows)
 --   opts.preview      (item, done) fills a Details panel beside the list when
 --                     the editor is wide enough; done(lines, { markdown?,
 --                     highlights?, mark?, badges? }); a mark given there replaces
 --                     opts.mark; badges ({ text, hl } pills) go at the top right.
 -- An item that is a table with a `heading` or `note` string (and an optional
 -- `hl`) is a static row: shown, never selected.
-local function open_pick(items, opts, on_choice, release)
+local function open_pick(all_items, opts, on_choice, release)
   opts = opts or {}
+  local items = all_items
   local format = opts.format_item or tostring
   local render = opts.render_item or function(item) return { { { format(item) } } } end
   local ns = ensure_ns()
@@ -512,7 +514,7 @@ local function open_pick(items, opts, on_choice, release)
   local widest, line_count
   local function measure()
     widest, line_count = vim.fn.strwidth(opts.prompt or "") + 4, 0
-    for _, item in ipairs(items) do
+    for _, item in ipairs(all_items) do
       for _, segs in ipairs(lines_of(item)) do
         line_count = line_count + 1
         local w = 0
@@ -523,9 +525,40 @@ local function open_pick(items, opts, on_choice, release)
   end
   measure()
 
+  local query, search_open = "", false
+  local function haystack(item)
+    if opts.search_text then return opts.search_text(item) end
+    local parts = {}
+    for _, segs in ipairs(render(item)) do
+      for _, seg in ipairs(segs) do parts[#parts + 1] = seg[1] end
+    end
+    return table.concat(parts, " ")
+  end
+  -- the items whose text holds every word of the query, under their headings
+  local function filtered()
+    local words = vim.split(query:lower(), "%s+", { trimempty = true })
+    if #words == 0 then return all_items end
+    local out, heading = {}, nil
+    for _, item in ipairs(all_items) do
+      if is_static(item) then
+        heading = item.heading and item or nil
+      else
+        local text, hit = haystack(item):lower(), true
+        for _, w in ipairs(words) do
+          if not text:find(w, 1, true) then hit = false; break end
+        end
+        if hit then
+          if heading then out[#out + 1] = heading; heading = nil end
+          out[#out + 1] = item
+        end
+      end
+    end
+    return #out > 0 and out or { { note = "No matches" } }
+  end
+
   local status
   local function footer(side)
-    local chunks = { { " ↵ " .. (opts.action or "select") .. "  esc close" .. (side and "  ^d ^u scroll" or "") .. " ", "ReviewrDim" } }
+    local chunks = { { " ↵ " .. (opts.action or "select") .. "  / search  esc close" .. (side and "  ^d ^u scroll" or "") .. " ", "ReviewrDim" } }
     if status then table.insert(chunks, { status[1] .. " ", status[2] }) end
     return chunks
   end
@@ -544,15 +577,17 @@ local function open_pick(items, opts, on_choice, release)
     end
     local group = list_w + 2 + (side and panel_w + 2 or 0)
     local col = math.max(0, math.floor((cols - group) / 2))
-    local row = math.max(0, math.floor((rows - height - 2) / 2))
+    local search_h = search_open and 3 or 0
+    local row = math.max(0, math.floor((rows - height - 2 - search_h) / 2))
     return {
       backdrop = { relative = "editor", width = cols, height = rows, row = 0, col = 0 },
+      search = search_open and { relative = "editor", width = group - 2, height = 1, row = row, col = col } or nil,
       list = {
-        relative = "editor", width = list_w, height = height, row = row, col = col,
+        relative = "editor", width = list_w, height = height, row = row + search_h, col = col,
         title = " " .. (opts.prompt or "") .. " ", title_pos = "center",
         footer = footer(side), footer_pos = "center",
       },
-      panel = side and { relative = "editor", width = panel_w, height = height, row = row, col = col + list_w + 2 } or nil,
+      panel = side and { relative = "editor", width = panel_w, height = height, row = row + search_h, col = col + list_w + 2 } or nil,
     }
   end
   local geo = layout()
@@ -576,6 +611,7 @@ local function open_pick(items, opts, on_choice, release)
   vim.wo[win].cursorline = false
 
   local panel_buf, panel_win, panel_content
+  local search_buf, search_win
   local cache, shown, generation = {}, nil, 0
   local entries, sel = {}, nil -- sel: index of the selected item, nil when there is none
 
@@ -775,6 +811,35 @@ local function open_pick(items, opts, on_choice, release)
       vim.api.nvim_win_close(panel_win, true)
       panel_win, panel_buf, panel_content = nil, nil, nil
     end
+    if geo.search and not search_win then
+      search_buf = vim.api.nvim_create_buf(false, true)
+      vim.bo[search_buf].bufhidden = "wipe"
+      search_win = vim.api.nvim_open_win(search_buf, false, vim.tbl_extend("force", geo.search, {
+        style = "minimal", border = "rounded", zindex = PICK_Z,
+      }))
+      vim.wo[search_win].winhl = "Normal:Normal,FloatBorder:ReviewrPickBorder"
+      vim.api.nvim_buf_set_lines(search_buf, 0, -1, false, { query })
+      vim.api.nvim_buf_set_extmark(search_buf, ns, 0, 0, {
+        virt_text = { { " / ", "ReviewrPickBorder" } }, virt_text_pos = "inline", right_gravity = false,
+      })
+    elseif geo.search then
+      vim.api.nvim_win_set_config(search_win, geo.search)
+    elseif search_win then
+      if vim.api.nvim_win_is_valid(search_win) then vim.api.nvim_win_close(search_win, true) end
+      search_win, search_buf = nil, nil
+    end
+  end
+
+  -- the list again for the query in the search box, the first match selected
+  local function sync_query()
+    if not (search_buf and vim.api.nvim_buf_is_valid(search_buf)) then return end
+    local text = vim.api.nvim_buf_get_lines(search_buf, 0, 1, false)[1] or ""
+    if text == query then return end
+    query = text
+    items = filtered()
+    shown, sel = nil, nil
+    draw()
+    reselect()
   end
 
   local done = false
@@ -783,7 +848,8 @@ local function open_pick(items, opts, on_choice, release)
     if done then return end
     done = true
     vim.api.nvim_del_augroup_by_id(group)
-    for _, w in pairs({ win = win, panel = panel_win, backdrop = backdrop }) do
+    if vim.fn.mode() == "i" then vim.cmd.stopinsert() end
+    for _, w in pairs({ win = win, panel = panel_win, search = search_win, backdrop = backdrop }) do
       if vim.api.nvim_win_is_valid(w) then vim.api.nvim_win_close(w, true) end
     end
     release()
@@ -798,12 +864,65 @@ local function open_pick(items, opts, on_choice, release)
     local k = sel and step(sel, dir)
     if k then focus(k) end
   end
-  map({ "j", "<Down>", "<C-n>" }, function() move(1) end)
-  map({ "k", "<Up>", "<C-p>" }, function() move(-1) end)
+  map({ "j", "<Down>", "<C-n>", "<C-j>" }, function() move(1) end)
+  map({ "k", "<Up>", "<C-p>", "<C-k>" }, function() move(-1) end)
+  -- window and pane motions (often on <C-h>/<C-l>) would leave the modal picker
+  map({ "<C-h>", "<C-l>", "<C-w>" }, function() end)
   map({ "gg" }, function() local k = step(0, 1); if k then focus(k) end end)
   map({ "G" }, function() local k = step(#entries + 1, -1); if k then focus(k) end end)
   map({ "<CR>" }, function() if sel then finish(items[sel]) end end)
-  map({ "<Esc>", "q" }, function() finish(nil) end)
+  map({ "q" }, function() finish(nil) end)
+
+  local function close_search()
+    vim.cmd.stopinsert()
+    search_open = false
+    if query ~= "" then
+      query = ""
+      items = all_items
+      shown, sel = nil, nil
+    end
+    relayout()
+    vim.api.nvim_set_current_win(win)
+  end
+  map({ "<Esc>" }, function()
+    if search_open then close_search() else finish(nil) end
+  end)
+  map({ "/" }, function()
+    if not search_open then
+      search_open = true
+      relayout()
+      vim.api.nvim_buf_attach(search_buf, false, { on_lines = function() vim.schedule(sync_query) end })
+      local function imap(keys, fn)
+        for _, key in ipairs(keys) do
+          vim.keymap.set("i", key, fn, { buffer = search_buf, silent = true, nowait = true })
+        end
+      end
+      imap({ "<CR>" }, function()
+        sync_query()
+        if sel then finish(items[sel]) end
+      end)
+      imap({ "<Down>", "<C-n>", "<C-j>" }, function() sync_query(); move(1) end)
+      imap({ "<Up>", "<C-p>", "<C-k>" }, function() sync_query(); move(-1) end)
+      imap({ "<C-c>" }, function() finish(nil) end)
+      -- Esc keeps the filter and goes back to the list; an empty query closes the box
+      imap({ "<Esc>" }, function()
+        sync_query()
+        if query == "" then return close_search() end
+        vim.cmd.stopinsert()
+        vim.api.nvim_set_current_win(win)
+      end)
+      for _, key in ipairs({ "<Esc>", "q" }) do
+        vim.keymap.set("n", key, function() vim.api.nvim_set_current_win(win) end,
+          { buffer = search_buf, silent = true, nowait = true })
+      end
+      vim.keymap.set("n", "<CR>", function()
+        sync_query()
+        if sel then finish(items[sel]) end
+      end, { buffer = search_buf, silent = true, nowait = true })
+    end
+    vim.api.nvim_set_current_win(search_win)
+    vim.cmd.startinsert({ bang = true })
+  end)
   if opts.preview then
     for key, scroll in pairs({ ["<C-d>"] = "\4", ["<C-u>"] = "\21" }) do
       map({ key }, function()
@@ -814,19 +933,17 @@ local function open_pick(items, opts, on_choice, release)
     end
   end
 
-  -- Anything else that takes focus (a notification, a message) hands it back;
-  -- only landing in an ordinary window cancels.
-  vim.api.nvim_create_autocmd("WinLeave", { group = group, buffer = buf, callback = function()
+  -- The picker is modal: whatever takes focus (a notification, a window
+  -- motion such as a <C-h> mapping) hands it back; only <Esc>, q or a pick close it.
+  vim.api.nvim_create_autocmd("WinLeave", { group = group, callback = function(ev)
+    if ev.buf ~= buf and ev.buf ~= search_buf then return end
     vim.schedule(function()
       if done then return end
       if not vim.api.nvim_win_is_valid(win) then return finish(nil) end
       local cur = vim.api.nvim_get_current_win()
-      if cur == win or cur == panel_win or cur == backdrop then return end
-      if vim.api.nvim_win_get_config(cur).relative ~= "" then
-        vim.api.nvim_set_current_win(win)
-      else
-        finish(nil)
-      end
+      if cur == win or cur == search_win then return end
+      if vim.fn.mode() == "i" then vim.cmd.stopinsert() end
+      vim.api.nvim_set_current_win(win)
     end)
   end })
   vim.api.nvim_create_autocmd("VimResized", { group = group, callback = function() relayout() end })
@@ -849,7 +966,8 @@ local function open_pick(items, opts, on_choice, release)
     if done then return end
     local current = sel and items[sel]
     local want = { index = sel, key = current and opts.key and opts.key(current) or nil }
-    items = new
+    all_items = new
+    items = filtered()
     measure()
     shown, sel = nil, nil
     relayout(want)
