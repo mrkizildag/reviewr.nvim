@@ -1,5 +1,5 @@
--- reviewr.git: git command execution
-local config = require("reviewr.config")
+-- heimdall.git: git command execution
+local config = require("heimdall.config")
 
 local M = {}
 

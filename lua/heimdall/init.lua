@@ -1,11 +1,11 @@
-local config_mod = require("reviewr.config")
-local events = require("reviewr.events")
-local log = require("reviewr.log")
-local store = require("reviewr.store")
-local state = require("reviewr.state")
-local scope_mod = require("reviewr.scope")
-local git = require("reviewr.git")
-local turn = require("reviewr.turn")
+local config_mod = require("heimdall.config")
+local events = require("heimdall.events")
+local log = require("heimdall.log")
+local store = require("heimdall.store")
+local state = require("heimdall.state")
+local scope_mod = require("heimdall.scope")
+local git = require("heimdall.git")
+local turn = require("heimdall.turn")
 
 local M = {}
 local setup_done = false
@@ -22,14 +22,14 @@ local current_pr
 -- watched agent starts working; auto: agent inside Rex, else open
 local function baseline_trigger()
   local t = config_mod.get().baseline_trigger
-  if t == "auto" then return require("reviewr.rex").available() and "agent" or "open" end
+  if t == "auto" then return require("heimdall.rex").available() and "agent" or "open" end
   return t
 end
 
--- The agent this review was opened for (Rex sets vim.g.reviewr_agent when
+-- The agent this review was opened for (Rex sets vim.g.heimdall_agent when
 -- cmd+r is pressed in an agent's terminal), or nil.
 local function paired()
-  local a = vim.g.reviewr_agent
+  local a = vim.g.heimdall_agent
   return type(a) == "table" and a.block and a or nil
 end
 
@@ -54,19 +54,19 @@ local function on_agent(new, old, label)
       turn.mark_turn({ repo = watch_repo, scope = turn_scope() })
     end
   elseif ACTIVE[old] and not ACTIVE[new] then
-    local ui = require("reviewr.ui")
+    local ui = require("heimdall.ui")
     if config_mod.get().refresh_on_agent and ui.is_open() then
       local here = vim.api.nvim_get_current_tabpage()
       ui.focus_tab()
       M.refresh()
       if vim.api.nvim_tabpage_is_valid(here) then vim.api.nvim_set_current_tabpage(here) end
-      vim.notify("reviewr: " .. label .. " finished; review refreshed", vim.log.levels.INFO)
+      vim.notify("heimdall: " .. label .. " finished; review refreshed", vim.log.levels.INFO)
     end
   end
 end
 
 local function watch_agent(cand)
-  local rex = require("reviewr.rex")
+  local rex = require("heimdall.rex")
   if cand.transport ~= "rex" or rex.watching(cand.id) then return end
   rex.watch(cand.meta.session, cand.id, { state = cand.state, label = cand.label, cb = on_agent })
 end
@@ -83,31 +83,31 @@ function M.setup(opts)
   if setup_done then return M end
   setup_done = true
   log.info("setup")
-  require("reviewr.ui").setup()
-  vim.api.nvim_create_user_command("ReviewrOpen", function(o) M.open(o.fargs) end, { nargs = "*" })
-  vim.api.nvim_create_user_command("ReviewrScope", function(o)
+  require("heimdall.ui").setup()
+  vim.api.nvim_create_user_command("HeimdallOpen", function(o) M.open(o.fargs) end, { nargs = "*" })
+  vim.api.nvim_create_user_command("HeimdallScope", function(o)
     M.set_scope(o.fargs[1], { commit = o.fargs[2], pr = tonumber(o.fargs[2]) })
   end, {
     nargs = "+",
     complete = function() return SCOPES end,
   })
-  vim.api.nvim_create_user_command("ReviewrPR", function(o) M.open_pr(o.args ~= "" and o.args or nil) end,
+  vim.api.nvim_create_user_command("HeimdallPR", function(o) M.open_pr(o.args ~= "" and o.args or nil) end,
     { nargs = "?" })
-  vim.api.nvim_create_user_command("ReviewrComment", function(o)
+  vim.api.nvim_create_user_command("HeimdallComment", function(o)
     M.add_comment({ body = o.args, start = o.line1, ["end"] = o.line2 })
-    require("reviewr.ui").redraw()
+    require("heimdall.ui").redraw()
   end, { nargs = "+", range = true })
-  vim.api.nvim_create_user_command("ReviewrTurn", function() M.mark_turn() end, {})
-  vim.api.nvim_create_user_command("ReviewrExport", function(o)
+  vim.api.nvim_create_user_command("HeimdallTurn", function() M.mark_turn() end, {})
+  vim.api.nvim_create_user_command("HeimdallExport", function(o)
     M.export(o.args ~= "" and o.args or nil, function(ok, res, dest)
-      vim.notify("reviewr: " .. (ok and (res .. " exported to " .. tostring(dest)) or tostring(res)),
+      vim.notify("heimdall: " .. (ok and (res .. " exported to " .. tostring(dest)) or tostring(res)),
         ok and vim.log.levels.INFO or vim.log.levels.WARN)
     end)
   end, {
     nargs = "?",
     complete = function() return { "clipboard", "send", "inbox" } end,
   })
-  vim.api.nvim_create_user_command("ReviewrClear", function() M.clear() end, {})
+  vim.api.nvim_create_user_command("HeimdallClear", function() M.clear() end, {})
   vim.api.nvim_create_autocmd("TabClosed", {
     callback = function(args)
       local tp = tonumber(args.match)
@@ -138,8 +138,8 @@ local function buf_from_ref(repo, ref, path, side, source)
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].modifiable = false
-  vim.b[buf].reviewr_file = path
-  vim.b[buf].reviewr_side = side
+  vim.b[buf].heimdall_file = path
+  vim.b[buf].heimdall_side = side
   local ft = vim.filetype.match({ filename = path }) or ""
   if ft ~= "" then vim.bo[buf].filetype = ft end
   return buf
@@ -212,7 +212,7 @@ local function scope_refs(repo, name, opts)
   if name == "staged" then return "HEAD", ":" end
   if name == "turn" then
     local sha = turn.last_turn_sha(repo, turn_scope())
-    if not sha then return nil, nil, "no turn marked yet; run :ReviewrTurn" end
+    if not sha then return nil, nil, "no turn marked yet; run :HeimdallTurn" end
     return sha, nil, nil, "last turn"
   end
   if name == "branch" then
@@ -234,15 +234,15 @@ end
 function M.open_file(path)
   local s = state.get()
   if not s or not s.files then return false end
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   local old
   for _, f in ipairs(s.files) do if f.path == path then old = f.old; break end end
   local left = buf_from_ref(s.repo, s.base_ref, path, "left", old)
   local right = buf_from_ref(s.repo, s.head_ref, path, "right")
-  vim.b[left].reviewr_at, vim.b[right].reviewr_at = s.left_at, s.right_at
-  vim.b[left].reviewr_source = old
+  vim.b[left].heimdall_at, vim.b[right].heimdall_at = s.left_at, s.right_at
+  vim.b[left].heimdall_source = old
   ui.show_file(left, right, path)
-  local keymaps = require("reviewr.keymaps")
+  local keymaps = require("heimdall.keymaps")
   keymaps.install(left)
   keymaps.install(right)
   ui.redraw(left)
@@ -254,7 +254,7 @@ end
 -- With nothing to review the tab still opens, saying so, and keeps its keys:
 -- r, a view key or the end of an agent's turn fills it once there are changes.
 local function show_empty()
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   local scope = scope_mod.get() or {}
   local bufs = {}
   for i, text in ipairs({ "", "  No changes to review (" .. (scope.label or scope.name or "this view") .. ")." }) do
@@ -264,7 +264,7 @@ local function show_empty()
     bufs[i] = buf
   end
   ui.show_file(bufs[1], bufs[2], nil)
-  for _, buf in ipairs(bufs) do require("reviewr.keymaps").install(buf) end
+  for _, buf in ipairs(bufs) do require("heimdall.keymaps").install(buf) end
   ui.open_files_panel({})
 end
 
@@ -285,12 +285,12 @@ local function load(prefer, files, keep_view)
   s.left_at, s.right_at = content_at(s.repo, s.base_ref), content_at(s.repo, s.head_ref)
   if #s.files == 0 then
     show_empty()
-    vim.notify("reviewr: no changes found", vim.log.levels.INFO)
+    vim.notify("heimdall: no changes found", vim.log.levels.INFO)
     return false
   end
   local target = s.files[1].path
   for _, f in ipairs(s.files) do if f.path == prefer then target = prefer; break end end
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   local d = ui.panes()
   local views = {}
   if keep_view and ui.is_open() and d.file == target then
@@ -317,11 +317,11 @@ local function start(repo, base_ref, head_ref, scope_name, label)
   end
   local bare = git.is_bare(repo)
   if not bare and not git.git_root(repo) then
-    vim.notify("reviewr: not in a git repository", vim.log.levels.WARN)
+    vim.notify("heimdall: not in a git repository", vim.log.levels.WARN)
     return false
   end
   local files = changed_files(repo, base_ref, head_ref)
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   local cur = vim.api.nvim_buf_get_name(0)
   local prefer = vim.startswith(cur, repo .. "/") and cur:sub(#repo + 2) or ui.panes().file
   if ui.is_open() then ui.focus_tab() else ui.open_tab() end
@@ -332,8 +332,8 @@ local function start(repo, base_ref, head_ref, scope_name, label)
   if not pruned[repo] then
     pruned[repo] = true
     local live
-    if require("reviewr.rex").available() then
-      local terms = require("reviewr.rex").terminals()
+    if require("heimdall.rex").available() then
+      local terms = require("heimdall.rex").terminals()
       -- an empty list may mean Rex didn't answer: keep every paired baseline
       if #terms > 0 then
         live = {}
@@ -346,9 +346,9 @@ local function start(repo, base_ref, head_ref, scope_name, label)
   if not bare and (trigger == "open" or (trigger == "agent" and not turn.last_turn_sha(repo, turn_scope()))) then
     turn.mark_turn({ repo = repo, scope = turn_scope() })
   end
-  if require("reviewr.rex").available() then
+  if require("heimdall.rex").available() then
     watch_repo = repo
-    local transport = require("reviewr.transport")
+    local transport = require("heimdall.transport")
     local agent = paired()
     if agent then
       local cand = transport.rex_candidate(agent.block)
@@ -380,7 +380,7 @@ function M.open(args)
 end
 
 local function notify_warn(msg)
-  vim.notify("reviewr: " .. msg, vim.log.levels.WARN)
+  vim.notify("heimdall: " .. msg, vim.log.levels.WARN)
   return nil, msg
 end
 
@@ -439,7 +439,7 @@ end
 -- opts.pr: the PR number; opts.slug: its "owner/name" when the repository
 -- isn't the one at `repo`.
 local function open_pr_scope(repo, opts)
-  local github = require("reviewr.github")
+  local github = require("heimdall.github")
   local view, err = github.view_pr(opts.pr, opts.slug, repo)
   if not view then return notify_warn("could not read PR #" .. tostring(opts.pr) .. ": " .. err) end
   local slug = view.url:match("github%.com/([^/]+/[^/]+)/pull/")
@@ -464,7 +464,7 @@ local function open_pr_scope(repo, opts)
     if not (mb and mb.ok and mb.stdout[1]) then return notify_warn("no merge base with " .. pr.base) end
     chosen_base = pr.base_ref
     current_pr = nil
-    vim.notify("reviewr: " .. view.headRefName .. " is checked out in " .. wt .. "; reviewing it there", vim.log.levels.INFO)
+    vim.notify("heimdall: " .. view.headRefName .. " is checked out in " .. wt .. "; reviewing it there", vim.log.levels.INFO)
     if not start(wt, mb.stdout[1], nil, "branch", "branch vs " .. pr.base .. " (PR #" .. pr.number .. ")") then return nil end
   else
     local cerr
@@ -483,7 +483,7 @@ function M.set_scope(name, opts)
   opts = opts or {}
   local repo = opts.dir or (state.get() or {}).repo or root()
   if name == "pr" then
-    if not opts.pr then return notify_warn("usage: ReviewrScope pr {number}") end
+    if not opts.pr then return notify_warn("usage: HeimdallScope pr {number}") end
     return open_pr_scope(repo, opts)
   end
   if NEEDS_TREE[name] and git.is_bare(repo) then
@@ -533,13 +533,13 @@ local function ago(iso)
 end
 
 local REVIEW_BADGE = {
-  APPROVED = { "Approved", "ReviewrBadgeApproved" },
-  CHANGES_REQUESTED = { "Changes requested", "ReviewrBadgeChanges" },
-  REVIEW_REQUIRED = { "Review required", "ReviewrBadgeReview" },
+  APPROVED = { "Approved", "HeimdallBadgeApproved" },
+  CHANGES_REQUESTED = { "Changes requested", "HeimdallBadgeChanges" },
+  REVIEW_REQUIRED = { "Review required", "HeimdallBadgeReview" },
 }
 local STATE_BADGE = {
-  OPEN = { "Open", "ReviewrBadgeOpen" }, MERGED = { "Merged", "ReviewrBadgeMerged" },
-  CLOSED = { "Closed", "ReviewrBadgeClosed" },
+  OPEN = { "Open", "HeimdallBadgeOpen" }, MERGED = { "Merged", "HeimdallBadgeMerged" },
+  CLOSED = { "Closed", "HeimdallBadgeClosed" },
 }
 
 -- The details panel of a PR: lines, highlights ({ line, col_start, col_end,
@@ -547,7 +547,7 @@ local STATE_BADGE = {
 -- shows for its checks (nil without any), then the { text, group } badge pills
 -- the panel puts at the top right.
 function M.pr_details_lines(d)
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   local lines, marks = {}, {}
   local function add(text, hl)
     lines[#lines + 1] = text
@@ -564,17 +564,17 @@ function M.pr_details_lines(d)
     lines[#lines + 1] = text
   end
 
-  add(d.title or "", "ReviewrHeading")
-  local badges = { d.isDraft and { "Draft", "ReviewrBadgeDraft" } or STATE_BADGE[d.state] or { d.state or "?" } }
+  add(d.title or "", "HeimdallHeading")
+  local badges = { d.isDraft and { "Draft", "HeimdallBadgeDraft" } or STATE_BADGE[d.state] or { d.state or "?" } }
   if REVIEW_BADGE[d.reviewDecision] then table.insert(badges, REVIEW_BADGE[d.reviewDecision]) end
-  if d.mergeable == "CONFLICTING" then table.insert(badges, { "Conflicts", "ReviewrBadgeConflicts" }) end
+  if d.mergeable == "CONFLICTING" then table.insert(badges, { "Conflicts", "HeimdallBadgeConflicts" }) end
   add("")
-  add(ui.icon("branch") .. " " .. (d.headRefName or "?") .. " → " .. (d.baseRefName or "?"), "ReviewrDim")
+  add(ui.icon("branch") .. " " .. (d.headRefName or "?") .. " → " .. (d.baseRefName or "?"), "HeimdallDim")
   local updated = ago(d.updatedAt)
   add(ui.icon("user") .. " " .. (d.author and d.author.login or "?") .. (updated and (" · updated " .. updated) or ""),
-    "ReviewrDim")
-  add_pieces({ { "+" .. (d.additions or 0), "ReviewrAdded" }, { "-" .. (d.deletions or 0), "ReviewrRemoved" },
-    { "· " .. (d.changedFiles or 0) .. " files", "ReviewrDim" } }, " ")
+    "HeimdallDim")
+  add_pieces({ { "+" .. (d.additions or 0), "HeimdallAdded" }, { "-" .. (d.deletions or 0), "HeimdallRemoved" },
+    { "· " .. (d.changedFiles or 0) .. " files", "HeimdallDim" } }, " ")
   add(ui.RULE)
 
   local counts = { passed = 0, failed = 0, pending = 0, skipped = 0 }
@@ -586,58 +586,58 @@ function M.pr_details_lines(d)
     total = total + 1
     if kind == "failed" then table.insert(failing, name) elseif kind == "pending" then table.insert(pending, name) end
   end
-  add("Checks", "ReviewrHeading")
+  add("Checks", "HeimdallHeading")
   if total == 0 then
-    add("No checks", "ReviewrDim")
+    add("No checks", "HeimdallDim")
   elseif counts.failed == 0 and counts.pending == 0 then
-    add(string.format("All %d checks passed", total), "ReviewrOk")
+    add(string.format("All %d checks passed", total), "HeimdallOk")
   else
     local pieces = {}
-    for _, part in ipairs({ { "passed", "✓", "ReviewrOk" }, { "failed", "✗", "ReviewrFail" },
-      { "pending", "●", "ReviewrPending" }, { "skipped", "○", "ReviewrDim" } }) do
+    for _, part in ipairs({ { "passed", "✓", "HeimdallOk" }, { "failed", "✗", "HeimdallFail" },
+      { "pending", "●", "HeimdallPending" }, { "skipped", "○", "HeimdallDim" } }) do
       if counts[part[1]] > 0 then table.insert(pieces, { part[2] .. " " .. counts[part[1]], part[3] }) end
     end
     add_pieces(pieces, "  ")
     for _, name in ipairs(failing) do
       add("✗ " .. name)
-      marks[#marks + 1] = { #lines - 1, 0, #"✗", "ReviewrFail" }
+      marks[#marks + 1] = { #lines - 1, 0, #"✗", "HeimdallFail" }
     end
     for _, name in ipairs(pending) do
       add("● " .. name)
-      marks[#marks + 1] = { #lines - 1, 0, #"●", "ReviewrPending" }
+      marks[#marks + 1] = { #lines - 1, 0, #"●", "HeimdallPending" }
     end
   end
   add(ui.RULE)
-  add("Description", "ReviewrHeading")
+  add("Description", "HeimdallHeading")
   local body = vim.trim((d.body or ""):gsub("\r", ""))
   if body == "" then
-    add("No description.", "ReviewrDim")
+    add("No description.", "HeimdallDim")
   else
     vim.list_extend(lines, vim.split(body, "\n"))
   end
 
   local mark
-  if counts.failed > 0 then mark = { "✗", "ReviewrFail" }
-  elseif counts.pending > 0 then mark = { "●", "ReviewrPending" }
-  elseif counts.passed > 0 then mark = { "✓", "ReviewrOk" } end
+  if counts.failed > 0 then mark = { "✗", "HeimdallFail" }
+  elseif counts.pending > 0 then mark = { "●", "HeimdallPending" }
+  elseif counts.passed > 0 then mark = { "✓", "HeimdallOk" } end
   return lines, marks, mark, vim.tbl_map(function(b) return { " " .. b[1] .. " ", b[2] } end, badges)
 end
 
 -- Two-line row for a PR: state icon and title, then repo (when slug_of is
 -- given), #number, author and age, dimmed.
 local function pr_row(slug_of)
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   return function(pr)
-    local icon = pr.isDraft and { ui.icon("pr_draft"), "ReviewrDim" } or { ui.icon("pr_open"), "ReviewrOk" }
+    local icon = pr.isDraft and { ui.icon("pr_draft"), "HeimdallDim" } or { ui.icon("pr_open"), "HeimdallOk" }
     local meta = {}
-    if slug_of then table.insert(meta, { slug_of(pr), "ReviewrDim" }) end
-    table.insert(meta, { "#" .. pr.number, "ReviewrNumber" })
-    table.insert(meta, { pr.author and pr.author.login or "?", "ReviewrDim" })
+    if slug_of then table.insert(meta, { slug_of(pr), "HeimdallDim" }) end
+    table.insert(meta, { "#" .. pr.number, "HeimdallNumber" })
+    table.insert(meta, { pr.author and pr.author.login or "?", "HeimdallDim" })
     local age = ago(pr.updatedAt)
-    if age then table.insert(meta, { age, "ReviewrDim" }) end
+    if age then table.insert(meta, { age, "HeimdallDim" }) end
     local second = { { "  " } }
     for i, m in ipairs(meta) do
-      if i > 1 then table.insert(second, { " · ", "ReviewrDim" }) end
+      if i > 1 then table.insert(second, { " · ", "HeimdallDim" }) end
       table.insert(second, m)
     end
     return { { icon, { " " .. pr.title } }, second }
@@ -648,11 +648,11 @@ end
 -- list's, else from gh: cb(details) or cb(nil, err). slug: "owner/name" when
 -- the PR isn't in the repository at dir.
 local function load_details(pr, slug, dir, cb)
-  local cache = require("reviewr.cache")
+  local cache = require("heimdall.cache")
   local file = cache.details_path(pr.url)
   local hit = cache.read(file)
   if hit and hit.details and hit.updatedAt == pr.updatedAt then return cb(hit.details) end
-  require("reviewr.github").pr_details(pr.number, slug, dir, function(details, err)
+  require("heimdall.github").pr_details(pr.number, slug, dir, function(details, err)
     if details then cache.write(file, { updatedAt = pr.updatedAt, details = details }) end
     cb(details, err)
   end)
@@ -664,8 +664,8 @@ local function details_preview(details)
 end
 
 local CHECKS_MARK = {
-  SUCCESS = { "✓", "ReviewrOk" }, FAILURE = { "✗", "ReviewrFail" }, ERROR = { "✗", "ReviewrFail" },
-  PENDING = { "●", "ReviewrPending" }, EXPECTED = { "●", "ReviewrPending" },
+  SUCCESS = { "✓", "HeimdallOk" }, FAILURE = { "✗", "HeimdallFail" }, ERROR = { "✗", "HeimdallFail" },
+  PENDING = { "●", "HeimdallPending" }, EXPECTED = { "●", "HeimdallPending" },
 }
 local PREFETCH_ITEMS, PREFETCH_PARALLEL = 8, 4
 
@@ -703,8 +703,8 @@ local function first_line(text) return vim.split(tostring(text), "\n")[1] end
 --   spec.empty       the line shown for an empty list
 --   spec.on_choice(pr)
 local function pr_picker(spec)
-  local ui = require("reviewr.ui")
-  local cache = require("reviewr.cache")
+  local ui = require("heimdall.ui")
+  local cache = require("heimdall.cache")
   local function items_for(prs)
     local rows = spec.rows(prs)
     return #rows > 0 and rows or { { note = spec.empty } }
@@ -728,7 +728,7 @@ local function pr_picker(spec)
   }, function(choice)
     if choice then spec.on_choice(choice) end
   end)
-  handle.set_status("refreshing…", "ReviewrDim")
+  handle.set_status("refreshing…", "HeimdallDim")
   if cached then prefetch_details(handle, only_prs(spec.rows(cached)), spec.slug_of, spec.dir) end
   spec.fetch(function(prs, err)
     if not handle.is_open() then return end
@@ -738,9 +738,9 @@ local function pr_picker(spec)
       handle.set_status(nil)
       return prefetch_details(handle, only_prs(spec.rows(prs)), spec.slug_of, spec.dir)
     end
-    if cached then return handle.set_status("offline: " .. first_line(err), "ReviewrFail") end
+    if cached then return handle.set_status("offline: " .. first_line(err), "HeimdallFail") end
     handle.set_status(nil)
-    handle.set_items({ { note = "Could not load pull requests: " .. first_line(err), hl = "ReviewrFail" } })
+    handle.set_items({ { note = "Could not load pull requests: " .. first_line(err), hl = "HeimdallFail" } })
   end)
 end
 
@@ -748,8 +748,8 @@ end
 function M.pick_pr()
   local repo = (state.get() or {}).repo or root()
   pr_picker({
-    cache_file = require("reviewr.cache").list_path(repo),
-    fetch = function(cb) require("reviewr.github").list_prs(repo, cb) end,
+    cache_file = require("heimdall.cache").list_path(repo),
+    fetch = function(cb) require("heimdall.github").list_prs(repo, cb) end,
     rows = function(prs) return prs end,
     dir = repo,
     empty = "No open pull requests",
@@ -782,7 +782,7 @@ end
 local function clone_of(slug)
   local found = clone_in_roots(slug)
   if found then return found end
-  local cache = config_mod.get().pr.cache_dir or (vim.fn.stdpath("cache") .. "/reviewr/repos")
+  local cache = config_mod.get().pr.cache_dir or (vim.fn.stdpath("cache") .. "/heimdall/repos")
   local dir = cache .. "/" .. slug
   if vim.uv.fs_stat(dir .. "/HEAD") then return dir end
   vim.fn.mkdir(vim.fn.fnamemodify(dir, ":h"), "p")
@@ -809,8 +809,8 @@ end
 function M.open_pr(arg)
   if not arg then
     pr_picker({
-      cache_file = require("reviewr.cache").list_path(nil),
-      fetch = require("reviewr.github").search_prs,
+      cache_file = require("heimdall.cache").list_path(nil),
+      fetch = require("heimdall.github").search_prs,
       rows = function(prs)
         local rows = {}
         for _, section in ipairs({ { "yours", "Yours" }, { "requested", "Review requested" } }) do
@@ -832,7 +832,7 @@ function M.open_pr(arg)
   if n then return M.set_scope("pr", { pr = tonumber(n) }) end
   local slug, number = arg:match("^([%w_.-]+/[%w_.-]+)#(%d+)$")
   if not slug then slug, number = arg:match("github%.com/([^/]+/[^/]+)/pull/(%d+)") end
-  if not slug then return notify_warn("usage: ReviewrPR [number | owner/repo#number | pull request URL]") end
+  if not slug then return notify_warn("usage: HeimdallPR [number | owner/repo#number | pull request URL]") end
   return open_pr_in(slug, tonumber(number))
 end
 
@@ -841,11 +841,11 @@ function M.pick_commit()
   local repo = (state.get() or {}).repo or root()
   local log = git.run_sync({ "log", "-n", "100", "--format=%h%x09%s" }, { cwd = repo }).stdout or {}
   local items = vim.tbl_filter(function(l) return l ~= "" end, log)
-  require("reviewr.ui").pick(items, {
-    prompt = require("reviewr.ui").title("commit", "Review commit"),
+  require("heimdall.ui").pick(items, {
+    prompt = require("heimdall.ui").title("commit", "Review commit"),
     render_item = function(l)
       local sha, subject = l:match("^(%S+)\t(.*)$")
-      return { { { sha, "ReviewrNumber" }, { "  " .. subject } } }
+      return { { { sha, "HeimdallNumber" }, { "  " .. subject } } }
     end,
   }, function(choice)
     if choice then M.set_scope("commit", { commit = choice:match("^(%S+)") }) end
@@ -861,7 +861,7 @@ function M.pick_base()
   local items = vim.tbl_filter(function(r)
     return r ~= "" and r ~= current and not r:match("/HEAD$") and r ~= "origin"
   end, refs)
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   ui.pick(items, { prompt = ui.title("branch", "Compare the branch against") }, function(choice)
     if not choice then return end
     chosen_base = choice
@@ -880,27 +880,27 @@ function M.refresh()
     local mb = git.run_sync({ "merge-base", base, head }, { cwd = s.repo })
     s.base_ref, s.head_ref = mb.ok and mb.stdout[1] or base, head
   end
-  return load(require("reviewr.ui").panes().file, nil, true)
+  return load(require("heimdall.ui").panes().file, nil, true)
 end
 
 function M.add_comment(input)
   input = input or {}
   local scope = scope_mod.get() or {}
   local repo = scope.repo or root()
-  local file = input.file or vim.b.reviewr_file
+  local file = input.file or vim.b.heimdall_file
   if not file then
     local name = vim.api.nvim_buf_get_name(0)
     if vim.startswith(name, repo .. "/") then file = name:sub(#repo + 2) end
   end
-  if not file then vim.notify("reviewr: no target file for comment", vim.log.levels.WARN); return nil, "no-file" end
+  if not file then vim.notify("heimdall: no target file for comment", vim.log.levels.WARN); return nil, "no-file" end
   local startl = input.start or vim.fn.line(".")
   local comment = store.add({
     repo = repo,
     scope = scope.name,
     file = file,
-    side = input.side or vim.b.reviewr_side or "right",
-    at = input.at or (not input.file and vim.b.reviewr_at) or nil,
-    source = input.source or (not input.file and vim.b.reviewr_source) or nil,
+    side = input.side or vim.b.heimdall_side or "right",
+    at = input.at or (not input.file and vim.b.heimdall_at) or nil,
+    source = input.source or (not input.file and vim.b.heimdall_source) or nil,
     start = startl,
     ["end"] = input["end"] or startl,
     body = input.body or "",
@@ -950,7 +950,7 @@ end
 
 function M.jump_comment(dir)
   local here = vim.fn.line(".")
-  local ordered = store.shown(vim.b.reviewr_file, vim.b.reviewr_side, vim.b.reviewr_at)
+  local ordered = store.shown(vim.b.heimdall_file, vim.b.heimdall_side, vim.b.heimdall_at)
   local target
   if dir > 0 then
     for _, c in ipairs(ordered) do
@@ -970,7 +970,7 @@ end
 function M.jump_file(dir)
   local s = state.get()
   if not s or not s.files or #s.files == 0 then return nil end
-  local cur = require("reviewr.ui").panes().file
+  local cur = require("heimdall.ui").panes().file
   local idx = 1
   for i, f in ipairs(s.files) do if f.path == cur then idx = i; break end end
   local nxt = s.files[((idx - 1 + dir) % #s.files) + 1].path
@@ -1044,12 +1044,12 @@ function M.export(target, cb, opts)
     events.emit("Exported", { target = tname, label = label, count = #comments })
     return finish(true, #comments, label)
   end
-  local transport = require("reviewr.transport")
+  local transport = require("heimdall.transport")
   if target == "send" or target == "agent" then
     local agent = not opts.pick and paired() or nil
     local target_cand = agent and transport.rex_candidate(agent.block)
     if agent and not target_cand then
-      vim.notify("reviewr: " .. agent.name .. " is no longer running in its terminal; choose an agent",
+      vim.notify("heimdall: " .. agent.name .. " is no longer running in its terminal; choose an agent",
         vim.log.levels.WARN)
     end
     transport.send(text, { repo = repo, mode = config_mod.get().send_mode, target = target_cand, pick = opts.pick },
@@ -1057,7 +1057,7 @@ function M.export(target, cb, opts)
   elseif target == "inbox" or target == "filesystem-inbox" then
     transport.send(text, { repo = repo, inbox_only = true }, delivered)
   else
-    require("reviewr.clipboard").copy(text)
+    require("heimdall.clipboard").copy(text)
     delivered("clipboard", "clipboard")
   end
   if result then return unpack(result) end
@@ -1067,16 +1067,16 @@ end
 function M.clear(query)
   store.clear(query or {})
   events.emit("Cleared", { query = query })
-  require("reviewr.ui").redraw()
+  require("heimdall.ui").redraw()
   return true
 end
 
 function M.close()
   store.clear()
-  require("reviewr.rex").unwatch_all()
+  require("heimdall.rex").unwatch_all()
   -- a Neovim started only for this review (cmd+r in Rex) has nothing left to show
-  if vim.g.reviewr_standalone then return vim.cmd("qall!") end
-  require("reviewr.ui").close_diff()
+  if vim.g.heimdall_standalone then return vim.cmd("qall!") end
+  require("heimdall.ui").close_diff()
 end
 
 return M

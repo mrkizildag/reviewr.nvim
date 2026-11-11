@@ -1,7 +1,7 @@
-local config = require("reviewr.config")
-local git = require("reviewr.git")
-local log = require("reviewr.log")
-local scope_mod = require("reviewr.scope")
+local config = require("heimdall.config")
+local git = require("heimdall.git")
+local log = require("heimdall.log")
+local scope_mod = require("heimdall.scope")
 
 local M = {}
 
@@ -24,7 +24,7 @@ function M.current_sha(repo)
   repo = repo or (scope_mod.repo() or vim.fn.getcwd())
   local tree = git.snapshot(repo)
   if not tree then return nil end
-  local r = git.run_sync({ "commit-tree", tree, "-p", "HEAD", "-m", "reviewr turn" }, { cwd = repo })
+  local r = git.run_sync({ "commit-tree", tree, "-p", "HEAD", "-m", "heimdall turn" }, { cwd = repo })
   if r.code ~= 0 then return nil end
   return r.stdout[1]
 end
@@ -80,7 +80,7 @@ function M.mark_turn(opts)
     return nil, "update-ref-failed"
   end
   log.info("turn marked " .. ref .. " -> " .. sha)
-  local events = require("reviewr.events")
+  local events = require("heimdall.events")
   events.emit("TurnMarked", { repo = repo, ref = ref, sha = sha })
   return ref, sha
 end

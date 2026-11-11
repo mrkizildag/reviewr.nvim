@@ -1,4 +1,4 @@
--- reviewr.keymaps: buffer-local defaults, remappable
+-- heimdall.keymaps: buffer-local defaults, remappable
 local M = {}
 
 M.defaults = {
@@ -62,7 +62,7 @@ end
 -- Opens the comment box for the current line or selection, or, given a
 -- comment, for editing that comment.
 local function open_comment_box(existing)
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   local startl, endl = vim.fn.line("."), vim.fn.line(".")
   if existing then
     startl, endl = existing.start, existing["end"]
@@ -71,14 +71,14 @@ local function open_comment_box(existing)
     if startl > endl then startl, endl = endl, startl end
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<esc>", true, false, true), "nx", false)
   end
-  local file = vim.b.reviewr_file
-  local side = vim.b.reviewr_side
-  local at, source = vim.b.reviewr_at, vim.b.reviewr_source
+  local file = vim.b.heimdall_file
+  local side = vim.b.heimdall_side
+  local at, source = vim.b.heimdall_at, vim.b.heimdall_source
   local origin = vim.api.nvim_get_current_win()
   local origin_buf = vim.api.nvim_get_current_buf()
   local alt = ui.alternate_win()
   if not file or not alt or not vim.api.nvim_win_is_valid(alt) then
-    vim.notify("reviewr: open a review first", vim.log.levels.WARN)
+    vim.notify("heimdall: open a review first", vim.log.levels.WARN)
     return
   end
 
@@ -87,7 +87,7 @@ local function open_comment_box(existing)
   vim.bo[buf].filetype = "markdown"
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].buftype = "acwrite"
-  vim.api.nvim_buf_set_name(buf, "reviewr://comment/" .. buf)
+  vim.api.nvim_buf_set_name(buf, "heimdall://comment/" .. buf)
   if existing then
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(existing.body, "\n", { plain = true }))
     vim.bo[buf].modified = false
@@ -97,7 +97,7 @@ local function open_comment_box(existing)
   -- comment_box = "same", over the pane commented on, below the range (above it
   -- when there is no room)
   local height = 6
-  local same = require("reviewr.config").get().comment_box == "same"
+  local same = require("heimdall.config").get().comment_box == "same"
   local target = same and origin or alt
   local pos = vim.api.nvim_win_get_position(target)
   local width = math.max(20, math.min(48, vim.api.nvim_win_get_width(target) - 2))
@@ -120,7 +120,7 @@ local function open_comment_box(existing)
     footer = " :w save    <esc> cancel ",
     footer_pos = "right",
   })
-  vim.wo[box].winhl = "Normal:Normal,FloatBorder:ReviewrPanelBorder"
+  vim.wo[box].winhl = "Normal:Normal,FloatBorder:HeimdallPanelBorder"
   if not existing then vim.cmd("startinsert") end
 
   ui.mark_range(origin_buf, startl, endl)
@@ -134,12 +134,12 @@ local function open_comment_box(existing)
     done = true
     vim.schedule(function()
       if vim.api.nvim_win_is_valid(origin) then vim.api.nvim_set_current_win(origin) end
-      local reviewr = require("reviewr")
+      local heimdall = require("heimdall")
       if body and body ~= "" then
         if existing then
-          reviewr.edit_comment(existing.id, body)
+          heimdall.edit_comment(existing.id, body)
         else
-          reviewr.add_comment({ file = file, side = side, at = at, source = source, body = body,
+          heimdall.add_comment({ file = file, side = side, at = at, source = source, body = body,
             start = startl, ["end"] = endl })
         end
       end
@@ -166,46 +166,46 @@ end
 M.open_comment_box = open_comment_box
 
 local function edit_here()
-  local c = require("reviewr.ui").comment_at_cursor()
-  if not c then vim.notify("reviewr: no comment on this line", vim.log.levels.INFO); return end
+  local c = require("heimdall.ui").comment_at_cursor()
+  if not c then vim.notify("heimdall: no comment on this line", vim.log.levels.INFO); return end
   open_comment_box(c)
 end
 
 local function delete_here()
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   local c = ui.comment_at_cursor()
-  if not c then vim.notify("reviewr: no comment on this line", vim.log.levels.INFO); return end
-  require("reviewr").delete_comment(c.id)
+  if not c then vim.notify("heimdall: no comment on this line", vim.log.levels.INFO); return end
+  require("heimdall").delete_comment(c.id)
   ui.redraw()
 end
 
 function M.quit()
-  local n = #require("reviewr.store").unsent()
-  local close = require("reviewr").close
+  local n = #require("heimdall.store").unsent()
+  local close = require("heimdall").close
   if n == 0 then return close() end
-  require("reviewr.ui").confirm("Close review?",
+  require("heimdall.ui").confirm("Close review?",
     n .. " unsent " .. (n == 1 and "comment" or "comments") .. " will be lost.", close)
 end
 
 local function report(ok, res, dest)
   if not ok then
-    vim.notify("reviewr: " .. tostring(res), vim.log.levels.WARN)
+    vim.notify("heimdall: " .. tostring(res), vim.log.levels.WARN)
     return
   end
   local what = res .. (res == 1 and " comment" or " comments")
   local msg = dest == "clipboard" and ("copied " .. what)
     or (dest and dest:find("/") and ("wrote " .. what .. " to " .. dest))
     or ("sent " .. what .. " to " .. tostring(dest))
-  vim.notify("reviewr: " .. msg, vim.log.levels.INFO)
+  vim.notify("heimdall: " .. msg, vim.log.levels.INFO)
 end
 
 local function export(target, opts)
-  require("reviewr").export(target, report, opts)
+  require("heimdall").export(target, report, opts)
 end
 
 local function jump_file(dir)
-  local f = require("reviewr").jump_file(dir)
-  if f then vim.notify("reviewr: " .. f, vim.log.levels.INFO) end
+  local f = require("heimdall").jump_file(dir)
+  if f then vim.notify("heimdall: " .. f, vim.log.levels.INFO) end
 end
 
 -- Keys that act on the cursor line of a diff pane. The rest work from the
@@ -217,7 +217,7 @@ function M.apply(bufnr, overrides, opts)
   bufnr = bufnr or 0
   if bufnr == 0 then bufnr = vim.api.nvim_get_current_buf() end
   local keys = vim.tbl_extend("force", M.defaults, overrides or {})
-  local ui = require("reviewr.ui")
+  local ui = require("heimdall.ui")
   local bindings = {
     { "comment", function() open_comment_box() end, { "n", "x" } },
     { "edit",    edit_here },
@@ -226,17 +226,17 @@ function M.apply(bufnr, overrides, opts)
     { "pick",    function() export("send", { pick = true }) end },
     { "copy",    function() export("clipboard") end },
     { "panel",   function() ui.toggle_panel() end },
-    { "nextc",   function() require("reviewr").jump_comment(1) end },
-    { "prevc",   function() require("reviewr").jump_comment(-1) end },
+    { "nextc",   function() require("heimdall").jump_comment(1) end },
+    { "prevc",   function() require("heimdall").jump_comment(-1) end },
     { "nextf",   function() jump_file(1) end },
     { "prevf",   function() jump_file(-1) end },
-    { "refresh", function() require("reviewr").refresh() end },
-    { "uncommitted", function() require("reviewr").set_scope("uncommitted") end },
-    { "branch",  function() require("reviewr").set_scope("branch") end },
-    { "turn",    function() require("reviewr").set_scope("turn") end },
-    { "commit",  function() require("reviewr").pick_commit() end },
-    { "base",    function() require("reviewr").pick_base() end },
-    { "pr",      function() require("reviewr").pick_pr() end },
+    { "refresh", function() require("heimdall").refresh() end },
+    { "uncommitted", function() require("heimdall").set_scope("uncommitted") end },
+    { "branch",  function() require("heimdall").set_scope("branch") end },
+    { "turn",    function() require("heimdall").set_scope("turn") end },
+    { "commit",  function() require("heimdall").pick_commit() end },
+    { "base",    function() require("heimdall").pick_base() end },
+    { "pr",      function() require("heimdall").pick_pr() end },
     { "help",    function() ui.toggle_help(M.legend) end },
     { "quit",    M.quit },
     { "next",    function() vim.cmd("normal! ]c") end },
@@ -257,7 +257,7 @@ end
 -- Binds the review keys as configured: the defaults, the user's overrides, or
 -- none at all with `keymaps = false`.
 function M.install(bufnr, opts)
-  local km = require("reviewr.config").get().keymaps
+  local km = require("heimdall.config").get().keymaps
   if not km then return nil end
   return M.apply(bufnr, type(km) == "table" and km or nil, opts)
 end

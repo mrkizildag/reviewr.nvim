@@ -1,4 +1,4 @@
-local log = require("reviewr.log")
+local log = require("heimdall.log")
 
 local M = {}
 local current = nil

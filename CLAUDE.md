@@ -1,7 +1,7 @@
-# reviewr.nvim
+# heimdall.nvim
 
 Neovim review tab (base | change | changed-files panel) whose comments go to a
-coding agent; `rex/reviewr/init.lua` is the Rex half (cmd+r). The maintainer
+coding agent; `rex/heimdall/init.lua` is the Rex half (cmd+r). The maintainer
 uses Rex, not herdr. Keep the decisions below unless the maintainer changes
 them.
 
@@ -12,10 +12,10 @@ them.
   files once `git add`ed. Untracked files never appear.
 - Working-tree diffs compare against a snapshot built in a temporary copy of the
   index with `git add -u`. Never touch the real index, worktree or user refs;
-  the plugin's only git writes are private `refs/reviewr/*` refs.
+  the plugin's only git writes are private `refs/heimdall/*` refs.
 - `branch` = the working tree (commits and uncommitted tracked edits) against
   its merge base with the default branch (`origin/HEAD`, else main/master) or
-  the base picked with `gb`. Two refs (`:ReviewrOpen a b`) compare commits only.
+  the base picked with `gb`. Two refs (`:HeimdallOpen a b`) compare commits only.
 - `commit` shows one commit against its parent (empty tree for a root commit).
 - With nothing to review the tab still opens, says so, and keeps its keys;
   outside a git repository it doesn't open.
@@ -33,7 +33,7 @@ them.
   never by substring or by Neovim's own pane. Pastes are bracketed; the default
   never presses Enter (`send_mode = "queue"`).
 - cmd+r in an agent's Rex pane pairs the review with it (label
-  `review:<agent block>`, `vim.g.reviewr_agent`): `s` sends straight to it, `S`
+  `review:<agent block>`, `vim.g.heimdall_agent`): `s` sends straight to it, `S`
   always offers the picker, its turn baseline is its own (`turn-<agent block>`),
   and only its turns move or refresh it.
 - A turn starts when the agent goes from idle to working/blocked (snapshot the
@@ -46,7 +46,7 @@ them.
 - cmd+r toggles: in a review it hides it (`session.detach_block`, Neovim keeps
   running with its comments), in an agent's pane it shows/hides that agent's
   review, elsewhere one unpaired review per repo per window.
-- Neovims started by cmd+r carry `vim.g.reviewr_standalone`, set with `--cmd` so
+- Neovims started by cmd+r carry `vim.g.heimdall_standalone`, set with `--cmd` so
   the user's config can see it (e.g. to keep startup notices quiet); closing the review
   quits them so the pane closes.
 - The Rex module is loaded from Neovim's managed copy with a `pcall`-guarded
@@ -56,10 +56,10 @@ them.
 - Copies also go out as OSC 52 inside Rex or over SSH.
 
 **tmux**
-- `tmux/reviewr.tmux` binds `prefix R` and user key `ESC [9001~` (what a
+- `tmux/heimdall.tmux` binds `prefix R` and user key `ESC [9001~` (what a
   terminal sends for cmd+r) to `tmux/toggle.sh`, loaded from Neovim's managed
-  copy behind an `if-shell` guard. Reviews are panes carrying `@reviewr`
-  (their repository); hidden ones wait in the background session `reviewr`.
+  copy behind an `if-shell` guard. Reviews are panes carrying `@heimdall`
+  (their repository); hidden ones wait in the background session `heimdall`.
   One review per window; unpaired.
 
 **UI**
@@ -82,11 +82,11 @@ them.
   segfaulted Neovim 0.12; hence `diffoff!` before `tabclose`). Use a separate
   Rex tab, close what you open, and don't touch the maintainer's panes or
   reviews that hold comments.
-- Keep `README.md`, `doc/reviewr.txt`, `INSTALL.md` (written for agents) and
-  `skills/reviewr-nvim/SKILL.md` in step with behaviour. Refresh the README
+- Keep `README.md`, `doc/heimdall.txt`, `INSTALL.md` (written for agents) and
+  `skills/heimdall-nvim/SKILL.md` in step with behaviour. Refresh the README
   screenshots when the UI they show changes.
 - Land every change as: branch, PR, rebase-merge yourself, delete the branch,
-  then `nvim --headless "+Lazy! update reviewr.nvim" +qa` (bumps
+  then `nvim --headless "+Lazy! update heimdall.nvim" +qa` (bumps
   `~/.config/nvim/lazy-lock.json`) and `rex config reload` if `rex/` changed.
   Open reviews keep old code until reopened.
 - Commits use the configured git identity, end-state messages, no

@@ -1,10 +1,12 @@
-# reviewr.nvim
+# heimdall.nvim
+
+Forked from [paul-enz/reviewr.nvim](https://github.com/paul-enz/reviewr.nvim), with a pull request picker and agent-centric review on top.
 
 A multiplexer-agnostic Neovim plugin that brings [herdr-reviewr](https://github.com/persiyanov/herdr-reviewr)-style code review to Neovim: open a diff of two branches, comment on lines or ranges, and send the whole review to a running coding agent (Claude Code, Codex, OpenCode, Aider, …), entirely from inside Neovim.
 
 ![cmd+r in Claude Code's terminal opens a review of the branch beside it, paired with that agent. `f` moves to auth.lua, `c` on line 23 opens the comment box, `:w` saves the comment, `s` pastes the review into Claude's input (the line, the comment, and a request to act on it), and Enter submits it; Claude starts on the comment.](assets/demo.gif)
 
-![reviewr.nvim reviewing a branch: the base on the left, the change on the right with two line comments above the lines they're about, every changed file listed along the bottom with its added and deleted lines, and the bar above the change naming the view and the comment count.](assets/screenshot.png)
+![heimdall.nvim reviewing a branch: the base on the left, the change on the right with two line comments above the lines they're about, every changed file listed along the bottom with its added and deleted lines, and the bar above the change naming the view and the comment count.](assets/screenshot.png)
 
 ![Adding a comment. `c` on a line or selection opens a small box over the other pane and marks the commented lines in the gutter. `:w` saves, `<esc>` cancels.](assets/comment.png)
 
@@ -23,9 +25,9 @@ A multiplexer-agnostic Neovim plugin that brings [herdr-reviewr](https://github.
 - In-memory comment store by design (ephemeral; close drops them, and asks first while any is unsent)
 - All-or-none export: clipboard, agent send, or filesystem inbox
 - Mux-agnostic send to a running agent: Neovim `:terminal` → tmux → Rex → WezTerm → inbox → clipboard
-- Private `refs/reviewr/*` baselines only; never mutates worktree/index/branches. Baselines of removed worktrees, and in Rex of closed terminals, are pruned when a review opens
-- Configurable keymaps, events (`User Reviewr…`), leveled logging
-- Runs from the shell: `nvim -d …` or `:ReviewrOpen`
+- Private `refs/heimdall/*` baselines only; never mutates worktree/index/branches. Baselines of removed worktrees, and in Rex of closed terminals, are pruned when a review opens
+- Configurable keymaps, events (`User Heimdall…`), leveled logging
+- Runs from the shell: `nvim -d …` or `:HeimdallOpen`
 
 ## Requirements
 
@@ -34,25 +36,25 @@ A multiplexer-agnostic Neovim plugin that brings [herdr-reviewr](https://github.
 
 ## Install
 
-Point your coding agent at this repository and ask it to install reviewr.nvim. [INSTALL.md](INSTALL.md) is written for agents: it adds the plugin to Neovim, installs the agent skill (`skills/reviewr-nvim`) so the agent can open reviews for you and act on the comments, and sets up the Rex key binding when you use Rex.
+Point your coding agent at this repository and ask it to install heimdall.nvim. [INSTALL.md](INSTALL.md) is written for agents: it adds the plugin to Neovim, installs the agent skill (`skills/heimdall-nvim`) so the agent can open reviews for you and act on the comments, and sets up the Rex key binding when you use Rex.
 
 By hand, with lazy.nvim:
 
 ```lua
 {
-  "paul-enz/reviewr.nvim",
-  cmd = { "ReviewrOpen", "ReviewrScope", "ReviewrComment", "ReviewrTurn", "ReviewrExport", "ReviewrClear" },
+  "mrkizildag/heimdall.nvim",
+  cmd = { "HeimdallOpen", "HeimdallScope", "HeimdallComment", "HeimdallTurn", "HeimdallExport", "HeimdallClear" },
   opts = {},
 }
 ```
 
 ## Rex
 
-`rex/reviewr/init.lua` is a Rex config module. Loaded from `~/.config/rex/init.lua` (see below), it binds cmd+r to show or hide a review beside the focused terminal. The first press opens a review of the terminal's branch, committed or not, against the default branch, in a split to its right; the next press hides it, still running with its comments, and the press after brings it back.
+`rex/heimdall/init.lua` is a Rex config module. Loaded from `~/.config/rex/init.lua` (see below), it binds cmd+r to show or hide a review beside the focused terminal. The first press opens a review of the terminal's branch, committed or not, against the default branch, in a split to its right; the next press hides it, still running with its comments, and the press after brings it back.
 
 With nothing to review, the review still opens and says so (`changed files (0)`); it fills in on `r`, a view key, or when a watched agent finishes a turn.
 
-Pressed in an agent's terminal, cmd+r opens a review **paired with that agent**: `s` sends to it without asking (`S` still offers the picker), the review follows only that agent's turns, and its turn baseline is its own. Run several agents, each with its own review beside it; with one git worktree per agent, each review's turn view shows exactly its agent's last turn. Agents sharing one working copy see each other's edits in their turn views, since git can't tell who wrote what. Pressed in any other terminal, cmd+r keeps one unpaired review per repository. `setup({ key = "...", command = "ReviewrOpen" })` changes the key or what is reviewed.
+Pressed in an agent's terminal, cmd+r opens a review **paired with that agent**: `s` sends to it without asking (`S` still offers the picker), the review follows only that agent's turns, and its turn baseline is its own. Run several agents, each with its own review beside it; with one git worktree per agent, each review's turn view shows exactly its agent's last turn. Agents sharing one working copy see each other's edits in their turn views, since git can't tell who wrote what. Pressed in any other terminal, cmd+r keeps one unpaired review per repository. `setup({ key = "...", command = "HeimdallOpen" })` changes the key or what is reviewed.
 
 ### Share Neovim's managed copy with Rex
 
@@ -63,14 +65,14 @@ Rex loads the module straight from the copy your Neovim plugin manager installed
 do
   local data_home = os.getenv("XDG_DATA_HOME") or os.getenv("HOME") .. "/.local/share"
   -- lazy.nvim; with vim.pack (Neovim 0.12+) use
-  -- data_home .. "/nvim/site/pack/core/opt/reviewr.nvim/rex/reviewr/init.lua"
-  local path = data_home .. "/nvim/lazy/reviewr.nvim/rex/reviewr/init.lua"
-  local ok, reviewr = pcall(dofile, path)
-  if ok then reviewr.setup() end -- or setup({ key = "ctrl+a>r" }) to pick another key
+  -- data_home .. "/nvim/site/pack/core/opt/heimdall.nvim/rex/heimdall/init.lua"
+  local path = data_home .. "/nvim/lazy/heimdall.nvim/rex/heimdall/init.lua"
+  local ok, heimdall = pcall(dofile, path)
+  if ok then heimdall.setup() end -- or setup({ key = "ctrl+a>r" }) to pick another key
 end
 ```
 
-The path assumes Neovim's default app name and data directory on macOS or Linux. For another plugin manager or a custom data directory, point it at `rex/reviewr/init.lua` inside that manager's copy of the plugin.
+The path assumes Neovim's default app name and data directory on macOS or Linux. For another plugin manager or a custom data directory, point it at `rex/heimdall/init.lua` inside that manager's copy of the plugin.
 
 Keep the `pcall`: Rex stops loading `init.lua` at a Lua error, so if the Neovim copy is removed, an unguarded `dofile` would take every binding after it with it. Guarded, only cmd+r goes.
 
@@ -82,22 +84,22 @@ Inside Rex the plugin also:
 
 - lists every terminal in one `rex do` round trip, so `s` stays quick with many panes open;
 - brings the agent's terminal forward after sending (`focus_agent`);
-- watches the program status of agents working in the repo and of any agent it sends to: when one starts a turn, the turn baseline is snapshotted (`baseline_trigger = "agent"`, the default in Rex), so `:ReviewrScope turn` shows exactly what that turn changed; when it finishes, the open review reloads (`refresh_on_agent`);
+- watches the program status of agents working in the repo and of any agent it sends to: when one starts a turn, the turn baseline is snapshotted (`baseline_trigger = "agent"`, the default in Rex), so `:HeimdallScope turn` shows exactly what that turn changed; when it finishes, the open review reloads (`refresh_on_agent`);
 - copies through OSC 52 as well as the `+` register, so `y` reaches your clipboard when Neovim runs on another machine.
 
 ## tmux
 
-`tmux/reviewr.tmux` gives tmux the same key outside Rex. `prefix R` shows a review of the current pane's branch, committed or not, against the default branch, in a split to its right. The next press hides it, still running with its comments in a background session named `reviewr`, and the press after brings the same review back. Pressed in a review, it hides that review. Each window keeps one review at a time.
+`tmux/heimdall.tmux` gives tmux the same key outside Rex. `prefix R` shows a review of the current pane's branch, committed or not, against the default branch, in a split to its right. The next press hides it, still running with its comments in a background session named `heimdall`, and the press after brings the same review back. Pressed in a review, it hides that review. Each window keeps one review at a time.
 
 Load it from Neovim's managed copy, as with Rex, at the end of `~/.tmux.conf`:
 
 ```tmux
-# lazy.nvim; with vim.pack use ~/.local/share/nvim/site/pack/core/opt/reviewr.nvim
-if-shell 'test -f ~/.local/share/nvim/lazy/reviewr.nvim/tmux/reviewr.tmux' \
-  "run-shell '~/.local/share/nvim/lazy/reviewr.nvim/tmux/reviewr.tmux'"
+# lazy.nvim; with vim.pack use ~/.local/share/nvim/site/pack/core/opt/heimdall.nvim
+if-shell 'test -f ~/.local/share/nvim/lazy/heimdall.nvim/tmux/heimdall.tmux' \
+  "run-shell '~/.local/share/nvim/lazy/heimdall.nvim/tmux/heimdall.tmux'"
 ```
 
-Then `tmux source-file ~/.tmux.conf`. Set options before that line to change the defaults: `set -g @reviewr-key R`, `set -g @reviewr-size 60%`, `set -g @reviewr-command "nvim -c 'lua vim.g.reviewr_standalone = true' -c 'ReviewrScope branch'"`, `set -g @reviewr-user-key 9`.
+Then `tmux source-file ~/.tmux.conf`. Set options before that line to change the defaults: `set -g @heimdall-key R`, `set -g @heimdall-size 60%`, `set -g @heimdall-command "nvim -c 'lua vim.g.heimdall_standalone = true' -c 'HeimdallScope branch'"`, `set -g @heimdall-user-key 9`.
 
 ### cmd+r in tmux
 
@@ -119,20 +121,20 @@ Outside tmux the shell receives that sequence instead, so cmd+r does nothing use
 nvim -d <(git show HEAD:file.txt) <(git show feature:file.txt)
 
 # integrated review session
-nvim -c 'cd /path/repo' -c 'ReviewrOpen HEAD feature'
+nvim -c 'cd /path/repo' -c 'HeimdallOpen HEAD feature'
 ```
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `:ReviewrOpen [base] [head] [label]` | open a review; no args reviews uncommitted changes, `{base}` alone reviews the working tree against its merge base with base, `{base} {head}` diffs the commits of head against its merge base with base |
-| `:ReviewrScope {scope}` | switch scope: `uncommitted`, `staged`, `branch` (the working tree against its merge base with the default branch, or the base picked with `gb`), `turn`, `commit {sha}`, `pr {number}` (a pull request of this repository against its merge base, fetched without checking it out; a PR whose branch is checked out in a worktree opens that worktree's branch view instead) |
-| `:ReviewrPR [arg]` | review a pull request: `{number}`, `owner/repo#{number}` or a PR URL. Without an argument, pick among the open PRs you authored or were asked to review, from any directory. Needs the `gh` CLI |
-| `:[range]ReviewrComment {text}` | comment on the current line or range |
-| `:ReviewrTurn` | snapshot the working tree as the turn baseline |
-| `:ReviewrExport {clipboard\|send\|inbox}` | export all comments (all-or-none) |
-| `:ReviewrClear` | clear comments |
+| `:HeimdallOpen [base] [head] [label]` | open a review; no args reviews uncommitted changes, `{base}` alone reviews the working tree against its merge base with base, `{base} {head}` diffs the commits of head against its merge base with base |
+| `:HeimdallScope {scope}` | switch scope: `uncommitted`, `staged`, `branch` (the working tree against its merge base with the default branch, or the base picked with `gb`), `turn`, `commit {sha}`, `pr {number}` (a pull request of this repository against its merge base, fetched without checking it out; a PR whose branch is checked out in a worktree opens that worktree's branch view instead) |
+| `:HeimdallPR [arg]` | review a pull request: `{number}`, `owner/repo#{number}` or a PR URL. Without an argument, pick among the open PRs you authored or were asked to review, from any directory. Needs the `gh` CLI |
+| `:[range]HeimdallComment {text}` | comment on the current line or range |
+| `:HeimdallTurn` | snapshot the working tree as the turn baseline |
+| `:HeimdallExport {clipboard\|send\|inbox}` | export all comments (all-or-none) |
+| `:HeimdallClear` | clear comments |
 
 ## Keys
 
@@ -160,21 +162,21 @@ The bar above the change pane always shows the next step. `?` lists every key.
 
 The changed-files panel has the same keys, except those that act on a line of the diff (`c`, `e`, `d`, `n`, `N`, `]c`, `[c`); there `<CR>` opens the file under the cursor.
 
-The pickers (`gc`, `gb`, `gp`, `S`) open a small centered list over a blank view: `j`/`k`, `Ctrl-j`/`Ctrl-k` or the arrows move, Enter picks, Esc cancels. `/` opens a search box above the list that filters as you type (every word must match, in any order, case-insensitive); Enter picks the selected match, Esc goes back to the list with the filter kept, and Esc in the list clears it. The picker is modal: window motions such as `Ctrl-h`/`Ctrl-l` do nothing while it is open. The selected row has a coloured bar and background. Pull requests take two lines (state icon and title; then repo, `#number`, author, age); `:ReviewrPR` without an argument groups them under "Yours" and "Review requested". The pull request pickers also show a Details panel beside the list (description, checks, review state) when Neovim is at least 120 columns wide; `Ctrl-d`/`Ctrl-u` scroll it: title with state, review and conflict badges at its right, branches, diff size, a checks summary with the failing and pending ones listed, and the description rendered as markdown. Once a PR's details have loaded its row shows a checks mark (`✓`, `✗` or `●`). The PR pickers open at once from the last list they fetched ("refreshing…" in the footer, "offline: …" if the fetch fails), update in place when GitHub answers, and load the details of the first eight PRs in the background. Lists and details are cached as JSON under `stdpath("cache")/reviewr` (`prs.json`, `prs-<hash of repo>.json`, `details/`; set `cache_dir` to move them), and details are reused only while the PR's update time is unchanged. Icons are Nerd Font glyphs; `setup({ icons = false })` uses plain unicode.
+The pickers (`gc`, `gb`, `gp`, `S`) open a small centered list over a blank view: `j`/`k`, `Ctrl-j`/`Ctrl-k` or the arrows move, Enter picks, Esc cancels. `/` opens a search box above the list that filters as you type (every word must match, in any order, case-insensitive); Enter picks the selected match, Esc goes back to the list with the filter kept, and Esc in the list clears it. The picker is modal: window motions such as `Ctrl-h`/`Ctrl-l` do nothing while it is open. The selected row has a coloured bar and background. Pull requests take two lines (state icon and title; then repo, `#number`, author, age); `:HeimdallPR` without an argument groups them under "Yours" and "Review requested". The pull request pickers also show a Details panel beside the list (description, checks, review state) when Neovim is at least 120 columns wide; `Ctrl-d`/`Ctrl-u` scroll it: title with state, review and conflict badges at its right, branches, diff size, a checks summary with the failing and pending ones listed, and the description rendered as markdown. Once a PR's details have loaded its row shows a checks mark (`✓`, `✗` or `●`). The PR pickers open at once from the last list they fetched ("refreshing…" in the footer, "offline: …" if the fetch fails), update in place when GitHub answers, and load the details of the first eight PRs in the background. Lists and details are cached as JSON under `stdpath("cache")/heimdall` (`prs.json`, `prs-<hash of repo>.json`, `details/`; set `cache_dir` to move them), and details are reused only while the PR's update time is unchanged. Icons are Nerd Font glyphs; `setup({ icons = false })` uses plain unicode.
 
-All buffer-local and remappable through the `keymaps` option or `require("reviewr.keymaps").set_defaults()`.
+All buffer-local and remappable through the `keymaps` option or `require("heimdall.keymaps").set_defaults()`.
 
 ## Pull requests
 
-`:ReviewrPR` and `gp` review a pull request without checking it out: its head is fetched into a private `refs/reviewr/pr/{n}` ref and compared with its merge base against the PR's base branch; your branches, index and HEAD are untouched. Comments go to the agent as in any other view. `gh` must be installed and logged in.
+`:HeimdallPR` and `gp` review a pull request without checking it out: its head is fetched into a private `refs/heimdall/pr/{n}` ref and compared with its merge base against the PR's base branch; your branches, index and HEAD are untouched. Comments go to the agent as in any other view. `gh` must be installed and logged in.
 
-A PR outside the current repository is opened in a clone of it: one found under `pr.roots` (directories scanned two levels deep for a remote on github.com/owner/repo), else a blobless bare clone kept in `pr.cache_dir` (default `stdpath("cache")/reviewr/repos/{owner}/{repo}`). A bare clone has no working tree, so only the PR and commit views work there.
+A PR outside the current repository is opened in a clone of it: one found under `pr.roots` (directories scanned two levels deep for a remote on github.com/owner/repo), else a blobless bare clone kept in `pr.cache_dir` (default `stdpath("cache")/heimdall/repos/{owner}/{repo}`). A bare clone has no working tree, so only the PR and commit views work there.
 
 ```lua
-require("reviewr").setup({ pr = { roots = { "~/projects" } } })
+require("heimdall").setup({ pr = { roots = { "~/projects" } } })
 ```
 
-With the Rex module, cmd+shift+r (`pr_key`) shows or hides a PR review kept apart from cmd+r's, opened on `:ReviewrPR` the first time and paired with the agent when pressed in an agent's terminal.
+With the Rex module, cmd+shift+r (`pr_key`) shows or hides a PR review kept apart from cmd+r's, opened on `:HeimdallPR` the first time and paired with the agent when pressed in an agent's terminal.
 
 ## Agents
 
@@ -212,18 +214,18 @@ Make the requested changes and answer any questions. Reply per item.
 
 Each comment gives its file (relative to the repository) and line range, and quotes the first three lines it covers as they were in the version it was made on. Every export carries every comment; one that succeeds marks them sent, so closing no longer asks about them.
 
-Default delivery is **queue** (pasted into the agent input, no Enter); set `send_mode = "submit"` to also submit. Filesystem inbox writes the same text to `<repo>/.reviewr/inbox/`, which git ignores.
+Default delivery is **queue** (pasted into the agent input, no Enter); set `send_mode = "submit"` to also submit. Filesystem inbox writes the same text to `<repo>/.heimdall/inbox/`, which git ignores.
 
 ## Configuration
 
 ```lua
-require("reviewr").setup({
+require("heimdall").setup({
   baseline_trigger = "auto",   -- auto (agent in Rex, else open) | open | agent | first_comment | manual
   focus_agent = true,          -- bring the agent's terminal forward after sending
   refresh_on_agent = true,     -- reload the review when a watched agent finishes
   log_level = "info",
   send_mode = "queue",         -- queue | submit
-  private_ref_prefix = "refs/reviewr",
+  private_ref_prefix = "refs/heimdall",
   keymaps = true,              -- false, or a table such as { send = "S" }
   files_panel_height = 10,     -- rows of the changed-files panel
   comment_box = "other",       -- other: the comment box opens over the other diff pane; same: below the commented lines
