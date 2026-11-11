@@ -121,6 +121,7 @@ CONFIGURATION                                           *reviewr-config*
     send_mode = "queue",         -- queue | submit
     keymaps = true,              -- false, or a table such as { send = "S" }
     files_panel_height = 10,     -- rows of the changed-files panel
+    comment_box = "other",       -- other | same: over the pane commented on
     adapters = { "neovim-terminal", "tmux", "rex", "wezterm", "filesystem-inbox" },
     agents = { "claude", "codex", "opencode", "aider", "goose", "cline", "pi" },
   })

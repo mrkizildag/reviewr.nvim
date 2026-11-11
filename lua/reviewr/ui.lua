@@ -417,6 +417,16 @@ function M.truncate(text, width)
   return vim.fn.strcharpart(text, 0, n) .. "…"
 end
 
+-- title cut into what fits in `room` columns (at a space when there is one) and the rest
+local function split_title(title, room)
+  local cut = vim.fn.strchars(title)
+  while cut > 0 and vim.fn.strwidth(vim.fn.strcharpart(title, 0, cut)) > room do cut = cut - 1 end
+  local head = vim.fn.strcharpart(title, 0, cut)
+  local space = head:match("^.*()%s")
+  if space and space > 1 then head = head:sub(1, space - 1) end
+  return head, vim.trim(title:sub(#head + 1))
+end
+
 -- One list row: segments { { text, hl? }, ... } inside a 1-col pad each side,
 -- cut to `width`, with an optional { text, hl } right-aligned. Returns the
 -- text and its highlights as { col_start, col_end, hl } (bytes).
@@ -439,6 +449,30 @@ local function compose(segments, width, mark)
   return text, spans
 end
 
+-- The ruler, showcmd, statusline, tabline and cmdline show under the backdrop,
+-- so they are hidden while a picker is open and put back with the last one.
+local chrome = { depth = 0, saved = nil }
+local CHROME = { ruler = false, showcmd = false, laststatus = 0, showtabline = 0, cmdheight = 0 }
+
+local function hide_chrome()
+  if chrome.depth == 0 then
+    chrome.saved = {}
+    for name in pairs(CHROME) do chrome.saved[name] = vim.o[name] end
+    for name, value in pairs(CHROME) do vim.o[name] = value end
+  end
+  chrome.depth = chrome.depth + 1
+end
+
+local function restore_chrome()
+  chrome.depth = chrome.depth - 1
+  if chrome.depth == 0 then
+    -- cmdheight first: restoring laststatus may need the room
+    vim.o.cmdheight = chrome.saved.cmdheight
+    for name, value in pairs(chrome.saved) do vim.o[name] = value end
+    chrome.saved = nil
+  end
+end
+
 -- A list in a centered box over a blank backdrop, taking vim.ui.select's
 -- arguments: j/k or the arrows move, <CR> picks, <Esc> or q cancels
 -- (on_choice(nil)). Returns a handle: { win, is_open(), set_items(items),
@@ -452,10 +486,11 @@ end
 --   opts.mark         item -> { text, hl } shown at the right of its first line
 --   opts.preview      (item, done) fills a Details panel beside the list when
 --                     the editor is wide enough; done(lines, { markdown?,
---                     highlights?, mark? }); a mark given there replaces opts.mark.
+--                     highlights?, mark?, badges? }); a mark given there replaces
+--                     opts.mark; badges ({ text, hl } pills) go at the top right.
 -- An item that is a table with a `heading` or `note` string (and an optional
 -- `hl`) is a static row: shown, never selected.
-function M.pick(items, opts, on_choice)
+local function open_pick(items, opts, on_choice, release)
   opts = opts or {}
   local format = opts.format_item or tostring
   local render = opts.render_item or function(item) return { { { format(item) } } } end
@@ -600,6 +635,27 @@ function M.pick(items, opts, on_choice)
     local rule = string.rep("─", math.max(1, geo.panel.width - 2))
     local rules = {}
     lines = vim.list_slice(lines)
+    local highlights = vim.list_slice(popts.highlights or {})
+    local pills = popts.badges or {}
+    local pills_w = 0
+    for _, b in ipairs(pills) do pills_w = pills_w + vim.fn.strwidth(b[1]) + 1 end
+    -- the pills sit right-aligned on the title's first row, so a title too long
+    -- to share it is split there and the rest wraps below
+    local room = geo.panel.width - 1 - pills_w - 1
+    if pills_w > 0 and vim.fn.strwidth(lines[1]) > room then
+      local head, rest = split_title(lines[1], math.max(10, room))
+      lines[1] = head
+      table.insert(lines, 2, rest)
+      for _, h in ipairs(highlights) do
+        if h[1] >= 1 then h[1] = h[1] + 1 end
+      end
+      for _, h in ipairs(vim.list_slice(highlights)) do
+        if h[1] == 0 then
+          h[3] = #head
+          table.insert(highlights, { 1, 0, #rest, h[4] })
+        end
+      end
+    end
     for i, l in ipairs(lines) do
       if l == M.RULE then
         lines[i] = rule
@@ -611,8 +667,13 @@ function M.pick(items, opts, on_choice)
     vim.bo[panel_buf].modifiable = false
     if popts.markdown then pcall(vim.treesitter.start, panel_buf, "markdown") else pcall(vim.treesitter.stop, panel_buf) end
     vim.api.nvim_buf_clear_namespace(panel_buf, ns, 0, -1)
-    for _, h in ipairs(popts.highlights or {}) do
+    for _, h in ipairs(highlights) do
       vim.api.nvim_buf_set_extmark(panel_buf, ns, h[1], h[2], { end_col = h[3], hl_group = h[4], priority = 200 })
+    end
+    if pills_w > 0 then
+      local chunks = {}
+      for _, b in ipairs(pills) do vim.list_extend(chunks, { { b[1], b[2] }, { " " } }) end
+      vim.api.nvim_buf_set_extmark(panel_buf, ns, 0, 0, { virt_text = chunks, virt_text_pos = "right_align" })
     end
     for _, line in ipairs(rules) do
       vim.api.nvim_buf_set_extmark(panel_buf, ns, line, 0, { end_col = #rule, hl_group = "ReviewrRule", priority = 200 })
@@ -725,6 +786,7 @@ function M.pick(items, opts, on_choice)
     for _, w in pairs({ win = win, panel = panel_win, backdrop = backdrop }) do
       if vim.api.nvim_win_is_valid(w) then vim.api.nvim_win_close(w, true) end
     end
+    release()
     on_choice(choice)
   end
   local function map(keys, fn)
@@ -804,6 +866,22 @@ function M.pick(items, opts, on_choice)
     cache[ck] = { lines, popts }
     if shown == ck then render_panel(lines, popts) end
     if popts and popts.mark then redraw() end
+  end
+  return handle
+end
+
+function M.pick(items, opts, on_choice)
+  hide_chrome()
+  local released = false
+  local function release()
+    if released then return end
+    released = true
+    restore_chrome()
+  end
+  local ok, handle = pcall(open_pick, items, opts, on_choice, release)
+  if not ok then
+    release()
+    error(handle, 0)
   end
   return handle
 end

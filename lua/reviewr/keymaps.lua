@@ -93,16 +93,26 @@ local function open_comment_box(existing)
     vim.bo[buf].modified = false
   end
 
-  -- a small box over the other pane, level with the line being commented
-  local pos = vim.api.nvim_win_get_position(alt)
-  local width = math.max(20, math.min(48, vim.api.nvim_win_get_width(alt) - 2))
+  -- a small box over the other pane, level with the line being commented; with
+  -- comment_box = "same", over the pane commented on, below the range (above it
+  -- when there is no room)
   local height = 6
+  local same = require("reviewr.config").get().comment_box == "same"
+  local target = same and origin or alt
+  local pos = vim.api.nvim_win_get_position(target)
+  local width = math.max(20, math.min(48, vim.api.nvim_win_get_width(target) - 2))
+  local row = pos[1] + vim.fn.winline() - 1
+  if same then
+    local below = vim.fn.screenpos(origin, endl, 1).row
+    local above = vim.fn.screenpos(origin, startl, 1).row - 1 - (height + 2)
+    row = (below > 0 and below + height + 2 <= vim.o.lines - vim.o.cmdheight) and below or math.max(0, above)
+  end
   local box = vim.api.nvim_open_win(buf, true, {
     relative = "editor",
     width = width,
     height = height,
     col = pos[2],
-    row = math.max(0, math.min(pos[1] + vim.fn.winline() - 1, vim.o.lines - height - 3)),
+    row = math.max(0, math.min(row, vim.o.lines - height - 3)),
     style = "minimal",
     border = "rounded",
     title = " comment  " .. vim.fn.fnamemodify(file, ":t") .. ":" .. span .. " ",

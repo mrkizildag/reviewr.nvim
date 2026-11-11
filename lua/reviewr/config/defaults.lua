@@ -16,6 +16,7 @@ M.defaults = {
   cache_dir = nil, -- nil => stdpath('cache')/reviewr, where the PR pickers keep their lists and details
   icons = true, -- Nerd Font icons in pickers and panels; false for plain unicode
   keymaps = true, -- false to skip, or a table of key overrides
+  comment_box = "other", -- other: the box opens over the other diff pane; same: below the commented lines
   files_panel_height = 10, -- rows of the changed-files panel, under its title
   pr = {
     roots = {}, -- directories scanned two levels deep for clones of a PR's repository

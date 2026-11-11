@@ -16,6 +16,9 @@ local function validate(opts)
   if opts.log_level and not levels[opts.log_level] then
     error("reviewr: invalid log_level " .. tostring(opts.log_level))
   end
+  if opts.comment_box and not vim.tbl_contains({ "other", "same" }, opts.comment_box) then
+    error("reviewr: invalid comment_box " .. tostring(opts.comment_box))
+  end
   local h = opts.files_panel_height
   if h ~= nil and (type(h) ~= "number" or h < 1 or h % 1 ~= 0) then
     error("reviewr: invalid files_panel_height " .. tostring(h))

@@ -505,6 +505,7 @@ test("the picker moves with j and arrows, picks with Enter, cancels with Esc", f
   eq(got, nil)
 end)
 
+local function ensure_ns_for_test() return vim.api.nvim_create_namespace("reviewr") end
 local function pick_win(...) return ui.pick(...).win end
 
 -- the plain text of each line of a rendered row
@@ -601,6 +602,76 @@ test("a wide editor shows the item's details beside the list, never a stale resu
   vim.o.columns = columns
 end)
 
+test("the badge pills sit at the top right of the panel's title line, not on a row of their own", function()
+  local columns = vim.o.columns
+  vim.o.columns = 140
+  local function panel_buf()
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      local c = vim.api.nvim_win_get_config(w)
+      if c.relative ~= "" and c.title and c.title[1][1] == " Details " then return vim.api.nvim_win_get_buf(w) end
+    end
+  end
+  local long = string.rep("long title ", 12)
+  for _, title in ipairs({ "Add b", long }) do
+    ui.pick({ "one" }, {
+      prompt = "Pick",
+      preview = function(_, done)
+        done({ title, "", "meta" }, { badges = { { " Open ", "ReviewrBadgeOpen" }, { " Approved ", "ReviewrBadgeApproved" } },
+          highlights = { { 0, 0, #title, "ReviewrHeading" } } })
+      end,
+    }, function() end)
+    vim.wait(300, function() return panel_buf() and vim.api.nvim_buf_get_lines(panel_buf(), 0, 1, false)[1] ~= "Loading…" end)
+    local buf = panel_buf()
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local pills = vim.tbl_filter(function(m) return m[4].virt_text_pos == "right_align" end,
+      vim.api.nvim_buf_get_extmarks(buf, ensure_ns_for_test(), 0, -1, { details = true }))
+    eq(#pills, 1)
+    eq(pills[1][2], 0, "on the first line")
+    eq(pills[1][4].virt_text[1][1], " Open ")
+    assert(not table.concat(lines, "\n"):find("Approved", 1, true), "the pills are not text rows")
+    if title == long then
+      assert(vim.fn.strwidth(lines[1]) < #long, "the long title is split so the pills fit")
+      eq(lines[1] .. " " .. lines[2], vim.trim(long))
+      eq(lines[3], "")
+    else
+      eq(lines, { title, "", "meta" })
+    end
+    press_keys("<Esc>")
+  end
+  vim.o.columns = columns
+end)
+
+test("a picker hides the ruler, showcmd, statusline, tabline and cmdline, and puts them back on every way out", function()
+  local names = { "ruler", "showcmd", "laststatus", "showtabline", "cmdheight" }
+  local before = { ruler = true, showcmd = true, laststatus = 2, showtabline = 2, cmdheight = 1 }
+  for name, value in pairs(before) do vim.o[name] = value end
+  local function now()
+    local out = {}
+    for _, name in ipairs(names) do out[name] = vim.o[name] end
+    return out
+  end
+  for _, key in ipairs({ "<CR>", "<Esc>" }) do
+    local handle = ui.pick({ "one" }, { prompt = "Pick" }, function() end)
+    eq(now(), { ruler = false, showcmd = false, laststatus = 0, showtabline = 0, cmdheight = 0 })
+    eq(vim.api.nvim_win_get_config(handle.win).relative, "editor")
+    local cover = vim.tbl_filter(function(w) return vim.api.nvim_win_get_config(w).focusable == false end, vim.api.nvim_list_wins())
+    eq(vim.api.nvim_win_get_config(cover[#cover]).height, vim.o.lines, "the backdrop takes the full height")
+    press_keys(key)
+    eq(now(), before)
+  end
+  -- a second picker opened over the first keeps the first's settings to restore
+  local a = ui.pick({ "one" }, { prompt = "A" }, function() end)
+  local b = ui.pick({ "one" }, { prompt = "B" }, function() end)
+  press_keys("<Esc>")
+  eq(vim.o.cmdheight, 0, "still hidden under the first")
+  vim.api.nvim_set_current_win(a.win)
+  press_keys("<Esc>")
+  eq(now(), before)
+  -- an error while opening restores them too
+  assert(not pcall(ui.pick, { "one" }, { prompt = "x", render_item = function() error("boom") end }, function() end))
+  eq(now(), before)
+end)
+
 test("below 120 columns there is no details panel", function()
   local before = float_count()
   ui.pick({ "one" }, { prompt = "Pick", preview = function() error("not called") end }, function() end)
@@ -610,7 +681,7 @@ test("below 120 columns there is no details panel", function()
 end)
 
 test("PR details render the checks, the counts and an empty description", function()
-  local lines, marks, mark = reviewr.pr_details_lines({
+  local lines, marks, mark, badges = reviewr.pr_details_lines({
     number = 7, title = "Add b", state = "OPEN", isDraft = false, author = { login = "mrk" },
     headRefName = "feat", baseRefName = "main", reviewDecision = "CHANGES_REQUESTED", mergeable = "CONFLICTING",
     additions = 10, deletions = 2, changedFiles = 3, body = "",
@@ -624,12 +695,12 @@ test("PR details render the checks, the counts and an empty description", functi
     },
   })
   local icon = ui.icon
-  eq(lines, { "Add b", " Open   Changes requested   Conflicts ", "", icon("branch") .. " feat → main",
+  eq(lines, { "Add b", "", icon("branch") .. " feat → main",
     icon("user") .. " mrk", "+10 -2 · 3 files", ui.RULE, "Checks", "✓ 1  ✗ 1  ● 2  ○ 1", "✗ CI / lint", "● e2e",
     "● deploy", ui.RULE, "Description", "No description." })
   local groups = {}
   for _, m in ipairs(marks) do groups[m[4]] = true end
-  for _, g in ipairs({ "ReviewrBadgeOpen", "ReviewrBadgeChanges", "ReviewrBadgeConflicts", "ReviewrFail",
+  for _, g in ipairs({ "ReviewrFail",
     "ReviewrPending", "ReviewrOk", "ReviewrAdded", "ReviewrRemoved" }) do
     assert(groups[g], g .. " is used")
   end
@@ -637,9 +708,11 @@ test("PR details render the checks, the counts and an empty description", functi
     assert(vim.api.nvim_get_hl(0, { name = g }).bg, g .. " has a background")
   end
   eq(mark, { "✗", "ReviewrFail" }, "the list's checks mark")
+  eq(badges, { { " Open ", "ReviewrBadgeOpen" }, { " Changes requested ", "ReviewrBadgeChanges" },
+    { " Conflicts ", "ReviewrBadgeConflicts" } })
   local passed = reviewr.pr_details_lines({ number = 1, title = "t", state = "OPEN", statusCheckRollup = {
     { __typename = "CheckRun", name = "a", status = "COMPLETED", conclusion = "SUCCESS" } }, body = "text" })
-  eq(passed[9], "All 1 checks passed")
+  eq(passed[8], "All 1 checks passed")
   eq(passed[#passed], "text")
 end)
 
@@ -705,6 +778,38 @@ test("icons = false falls back to plain unicode", function()
   eq(ui.title("commit", "Review commit"), "Review commit")
   cfg.icons = true
   assert(ui.icon("pr_open") ~= "●", "Nerd Font glyph by default")
+end)
+
+test("the comment box opens over the other pane, or with comment_box = same below the commented lines", function()
+  assert(reviewr.open({ "master" }))
+  store.clear()
+  reviewr.open_file("g.lua")
+  local d = ui.panes()
+  vim.api.nvim_set_current_win(d.right_win)
+  vim.api.nvim_win_set_cursor(d.right_win, { 1, 0 })
+  local keymaps = require("reviewr.keymaps")
+  local function open_box()
+    keymaps.open_comment_box()
+    local c = vim.api.nvim_win_get_config(0)
+    local out = { col = c.col, row = c.row, height = c.height }
+    vim.cmd("stopinsert")
+    vim.cmd("q!")
+    vim.wait(50)
+    return out
+  end
+  local left, right = vim.api.nvim_win_get_position(d.left_win), vim.api.nvim_win_get_position(d.right_win)
+  local box = open_box()
+  eq(box.col, left[2], "over the other pane")
+  local cfg = require("reviewr.config").get()
+  cfg.comment_box = "same"
+  box = open_box()
+  eq(box.col, right[2], "over the pane commented on")
+  eq(box.row, vim.fn.screenpos(d.right_win, 1, 1).row, "right below the commented line")
+  vim.api.nvim_win_set_cursor(d.right_win, { vim.api.nvim_buf_line_count(d.right_buf), 0 })
+  box = open_box()
+  assert(box.row + box.height + 2 <= vim.o.lines, "and above it when there is no room below")
+  cfg.comment_box = "other"
+  store.clear()
 end)
 
 test("refresh keeps both panes where they were", function()

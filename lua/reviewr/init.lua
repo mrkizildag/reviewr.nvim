@@ -544,7 +544,8 @@ local STATE_BADGE = {
 
 -- The details panel of a PR: lines, highlights ({ line, col_start, col_end,
 -- group }, 0-based line, byte columns) and the { text, group } mark the list
--- shows for its checks (nil without any).
+-- shows for its checks (nil without any), then the { text, group } badge pills
+-- the panel puts at the top right.
 function M.pr_details_lines(d)
   local ui = require("reviewr.ui")
   local lines, marks = {}, {}
@@ -567,7 +568,6 @@ function M.pr_details_lines(d)
   local badges = { d.isDraft and { "Draft", "ReviewrBadgeDraft" } or STATE_BADGE[d.state] or { d.state or "?" } }
   if REVIEW_BADGE[d.reviewDecision] then table.insert(badges, REVIEW_BADGE[d.reviewDecision]) end
   if d.mergeable == "CONFLICTING" then table.insert(badges, { "Conflicts", "ReviewrBadgeConflicts" }) end
-  add_pieces(vim.tbl_map(function(b) return { " " .. b[1] .. " ", b[2] } end, badges), " ")
   add("")
   add(ui.icon("branch") .. " " .. (d.headRefName or "?") .. " → " .. (d.baseRefName or "?"), "ReviewrDim")
   local updated = ago(d.updatedAt)
@@ -620,7 +620,7 @@ function M.pr_details_lines(d)
   if counts.failed > 0 then mark = { "✗", "ReviewrFail" }
   elseif counts.pending > 0 then mark = { "●", "ReviewrPending" }
   elseif counts.passed > 0 then mark = { "✓", "ReviewrOk" } end
-  return lines, marks, mark
+  return lines, marks, mark, vim.tbl_map(function(b) return { " " .. b[1] .. " ", b[2] } end, badges)
 end
 
 -- Two-line row for a PR: state icon and title, then repo (when slug_of is
@@ -659,8 +659,8 @@ local function load_details(pr, slug, dir, cb)
 end
 
 local function details_preview(details)
-  local lines, marks, mark = M.pr_details_lines(details)
-  return lines, { markdown = true, highlights = marks, mark = mark }
+  local lines, marks, mark, badges = M.pr_details_lines(details)
+  return lines, { markdown = true, highlights = marks, mark = mark, badges = badges }
 end
 
 local CHECKS_MARK = {
